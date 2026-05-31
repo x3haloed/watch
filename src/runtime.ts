@@ -25,8 +25,16 @@ export class WatchRuntime {
   constructor(private readonly config: WatchConfig) {
     this.log = new EventLog(config.repoRoot);
     this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
-    this.lookout = new Lookout(this.streams, this.log, this.models, config.noModel, config.repoRoot);
     this.restingModelId = config.restingModel ?? config.defaultModel;
+    this.lookout = new Lookout(
+      this.streams,
+      this.log,
+      this.models,
+      config.noModel,
+      config.repoRoot,
+      this.restingModelId,
+      config.restAfterNoToolSoundings,
+    );
   }
 
   start(): void {

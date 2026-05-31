@@ -11,6 +11,8 @@ type SkillRecord = {
   category?: string;
 };
 
+export type SkillSummary = Pick<SkillRecord, 'name' | 'description' | 'path' | 'category'>;
+
 export class SkillLibrary {
   private readonly roots: string[];
 
@@ -19,7 +21,7 @@ export class SkillLibrary {
   }
 
   async list(category?: string): Promise<Record<string, unknown>> {
-    const skills = await this.findAll();
+    const skills = await this.summaries(category);
     const filtered = category ? skills.filter(skill => skill.category === category) : skills;
     const categories = Array.from(new Set(filtered.map(skill => skill.category).filter(Boolean))).sort();
     return {
@@ -29,6 +31,18 @@ export class SkillLibrary {
       count: filtered.length,
       hint: 'Use skill_view with a skill name to load full instructions, or with file_path to load a linked file.',
     };
+  }
+
+  async summaries(category?: string): Promise<SkillSummary[]> {
+    const skills = await this.findAll();
+    return (category ? skills.filter(skill => skill.category === category) : skills).map(
+      ({ name, description, category: skillCategory, path }) => ({
+        name,
+        description,
+        category: skillCategory,
+        path,
+      }),
+    );
   }
 
   async view(name: string, filePath?: string): Promise<Record<string, unknown>> {

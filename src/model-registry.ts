@@ -127,6 +127,10 @@ export class ModelRegistry {
     };
   }
 
+  async resolveAll(): Promise<ResolvedModel[]> {
+    return await Promise.all(this.listModelIds().map(id => this.resolve(id)));
+  }
+
   async switchTo(id: string): Promise<ResolvedModel> {
     const model = await this.resolve(id);
     if (!model.capabilities.tools) {

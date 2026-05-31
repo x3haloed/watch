@@ -34,6 +34,9 @@ export type ModelConfig = {
   model: string;
   baseURL?: string;
   apiKeyEnv?: string;
+  params?: string;
+  role?: string;
+  useFor?: string;
   capabilities?: Partial<ModelCapabilities>;
 };
 

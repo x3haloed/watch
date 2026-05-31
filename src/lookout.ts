@@ -1,6 +1,6 @@
 import { ToolLoopAgent, jsonSchema, stepCountIs, tool } from 'ai';
 import type { ModelMessage } from 'ai';
-import type { ResolvedModel, Sounding } from './types.js';
+import type { ModelCapabilities, ResolvedModel, Sounding } from './types.js';
 import { StreamRegistry } from './streams.js';
 import { EventLog } from './event-log.js';
 import { ModelRegistry } from './model-registry.js';
@@ -27,6 +27,8 @@ export class Lookout {
     private readonly models: ModelRegistry,
     private readonly noModel: boolean,
     repoRoot: string,
+    private readonly restingModelId?: string,
+    private readonly restAfterNoToolSoundings = 3,
   ) {
     this.cwd = repoRoot;
     this.fileTools = new RepoFileTools(repoRoot);
@@ -425,9 +427,57 @@ export class Lookout {
   }
 
   private async instructions(): Promise<string> {
-    const context = await this.contextPrompt;
+    const [context, modelRoster, availableSkills] = await Promise.all([
+      this.contextPrompt,
+      this.modelRosterPrompt(),
+      this.availableSkillsPrompt(),
+    ]);
     const environment = `[environment]\ncwd: ${this.cwd}\nFilesystem tools accept relative paths from cwd and absolute paths. They reject parent traversal paths containing "..".\n[/environment]`;
-    return context ? `${LOOKOUT_INSTRUCTIONS}\n\n${environment}\n\n${context}` : `${LOOKOUT_INSTRUCTIONS}\n\n${environment}`;
+    return [LOOKOUT_INSTRUCTIONS, environment, modelRoster, availableSkills, context].filter(Boolean).join('\n\n');
+  }
+
+  private async modelRosterPrompt(): Promise<string> {
+    const models = await this.models.resolveAll();
+    const lines = models.map(model => {
+      const capabilities = formatCapabilities(model.capabilities);
+      const params = model.params ?? inferParamCount(`${model.id} ${model.model}`) ?? 'unknown';
+      const role = model.role ?? (model.id === this.restingModelId ? 'resting/gazing' : 'available');
+      const useFor = model.useFor ?? defaultUseFor(model, this.restingModelId);
+      return [
+        `- ${model.id}`,
+        `  provider: ${model.provider}`,
+        `  provider_model: ${model.model}`,
+        `  role: ${role}`,
+        `  params: ${params}`,
+        `  capabilities: ${capabilities}`,
+        `  use_for: ${useFor}`,
+      ].join('\n');
+    });
+
+    return `[model_roster]
+resting_model: ${this.restingModelId ?? '(none configured)'}
+active_model_restore_policy: Watch may silently restore the resting model after ${this.restAfterNoToolSoundings} Soundings without tool calls.
+reroute_instruction: If the current Sounding asks for work that exceeds the active model's reasoning strength, parameter scale, or modality support, call handle_with_model immediately with the best model ID. Do not try to solve the request first. The same Sounding will be replayed to the selected model with a note that you chose the reroute.
+${lines.join('\n')}
+[/model_roster]`;
+  }
+
+  private async availableSkillsPrompt(): Promise<string> {
+    const skills = await this.skills.summaries();
+    if (skills.length === 0) {
+      return '';
+    }
+
+    const lines = skills.map(skill => {
+      const category = skill.category ? ` category=${skill.category}` : '';
+      const description = skill.description ? `: ${skill.description}` : '';
+      return `- ${skill.name}${category} path=${skill.path}${description}`;
+    });
+
+    return `[available_skills]
+These are SKILL.md frontmatter summaries discovered under cwd. Use skill_view to load the full instructions before applying a skill.
+${lines.join('\n')}
+[/available_skills]`;
   }
 
   private formatSounding(
@@ -477,8 +527,45 @@ Treat incoming user messages as inbox deltas, not commands that automatically de
 Inbox deltas are indexes, not full messages. When an inbox entry says to call open_message with an ID, call open_message to read it.
 If you want to communicate externally, call send_message with a medium such as "cli". Your final assistant text is private working speech and is not delivered to the user.
 Use subscribe_stream and unsubscribe_stream to control your gaze.
-Use handle_with_model when the current Sounding calls for a different model substrate.
+Use handle_with_model when the current Sounding calls for a larger model, stronger reasoning, or different modalities than the active model has.
 Do not narrate internal routing unless it matters to an external observer.`;
+
+function formatCapabilities(capabilities: ModelCapabilities): string {
+  const enabled = [
+    capabilities.tools ? 'tools' : '',
+    capabilities.text ? 'text' : '',
+    capabilities.images ? 'images' : '',
+    capabilities.audio ? 'audio' : '',
+    capabilities.video ? 'video' : '',
+    capabilities.pdf ? 'pdf' : '',
+    capabilities.reasoning ? 'reasoning' : '',
+    capabilities.structuredOutput ? 'structured_output' : '',
+    capabilities.contextTokens ? `context:${capabilities.contextTokens}` : '',
+    capabilities.outputTokens ? `output:${capabilities.outputTokens}` : '',
+  ].filter(Boolean);
+  return `${enabled.join(', ') || 'none'} (source: ${capabilities.source})`;
+}
+
+function inferParamCount(text: string): string | undefined {
+  const match = /(?:^|[^a-z0-9])(\d+(?:\.\d+)?)\s*([bm])(?:[^a-z0-9]|$)/i.exec(text);
+  if (!match) {
+    return undefined;
+  }
+  return `${match[1]}${match[2].toUpperCase()}`;
+}
+
+function defaultUseFor(model: ResolvedModel, restingModelId?: string): string {
+  if (model.id === restingModelId) {
+    return 'ambient monitoring, lightweight routing, simple message handling, and deciding whether to reroute';
+  }
+  const multimodal = ['images', 'audio', 'video', 'pdf'].filter(key => model.capabilities[key as keyof ModelCapabilities] === true);
+  const traits = [
+    model.capabilities.reasoning ? 'hard reasoning' : 'general work',
+    multimodal.length ? `${multimodal.join('/')} inputs` : '',
+    model.params ?? inferParamCount(`${model.id} ${model.model}`) ?? '',
+  ].filter(Boolean);
+  return traits.join(', ');
+}
 
 function requiredApiKeyEnv(model: ResolvedModel): string | undefined {
   if (model.provider === 'openai-compatible' && model.baseURL?.includes('localhost')) {
