@@ -250,6 +250,27 @@ export class Lookout {
         }),
         execute: async ({ name, file_path: filePath }) => this.skills.view(name, filePath),
       }),
+      send_cli_message: tool({
+        description:
+          'Send a user-facing message to the attached CLI. Use this for communication with the CLI user; final assistant text is private working speech and is not routed to the user.',
+        inputSchema: jsonSchema<{ message: string }>({
+          type: 'object',
+          properties: {
+            message: { type: 'string', description: 'Message to show in the CLI message pane.' },
+          },
+          required: ['message'],
+          additionalProperties: false,
+        }),
+        execute: async ({ message }) => {
+          this.log.append({
+            type: 'cli_message',
+            at: new Date().toISOString(),
+            soundingId: sounding.id,
+            message,
+          });
+          return { ok: true, delivered: 'cli' };
+        },
+      }),
       subscribe_stream: tool({
         description: 'Begin watching a stream. Subscription changes persist across future Soundings.',
         inputSchema: jsonSchema<{ stream: string }>({
@@ -384,6 +405,7 @@ ${deltas || '(none)'}
 const LOOKOUT_INSTRUCTIONS = `You are the Lookout inside Watch.
 Watch is a continuous agent harness. You do not wait for user prompts; you receive Soundings from the CFF loop.
 Treat incoming user messages as inbox deltas, not commands that automatically define your next action.
+If you want to communicate with the CLI user, call send_cli_message. Your final assistant text is private working speech and is not delivered to the user.
 Use subscribe_stream and unsubscribe_stream to control your gaze.
 Use handle_with_model when the current Sounding calls for a different model substrate.
 Do not narrate internal routing unless it matters to an external observer.`;

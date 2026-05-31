@@ -18,7 +18,9 @@
   "type": "module",
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.48",
-    "ai": "^6.0.193"
+    "@types/blessed": "^0.1.27",
+    "ai": "^6.0.193",
+    "blessed": "^0.1.81"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
