@@ -10,6 +10,8 @@ import type { WatchConfig } from './types.js';
 type WatchConfigFile = {
   defaultModel?: string;
   restingModel?: string;
+  minCffMs?: number;
+  maxCffMs?: number;
   restAfterNoToolSoundings?: number;
 };
 
@@ -121,8 +123,8 @@ function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
   const defaultModel = stringFlag(args, '--model') ?? file.defaultModel ?? 'openrouter:anthropic/claude-sonnet-4.5';
   return {
     repoRoot,
-    minCffMs: numberFlag(args, '--min-cff-ms') ?? 2_000,
-    maxCffMs: numberFlag(args, '--max-cff-ms') ?? 30_000,
+    minCffMs: numberFlag(args, '--min-cff-ms') ?? file.minCffMs ?? 2_000,
+    maxCffMs: numberFlag(args, '--max-cff-ms') ?? file.maxCffMs ?? 30_000,
     modelTimeoutMs: numberFlag(args, '--model-timeout-ms') ?? 120_000,
     defaultModel,
     restingModel: stringFlag(args, '--resting-model') ?? file.restingModel ?? file.defaultModel ?? defaultModel,
