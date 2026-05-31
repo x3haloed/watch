@@ -163,12 +163,13 @@ function renderMessages(events: EventRecord[]): string {
   const rows: string[] = [];
   for (const event of events) {
     if (event.type === 'stream_delta' && event.delta?.stream === 'inbox') {
-      for (const message of event.delta.payload?.messages ?? []) {
-        rows.push(`${time(event.at)} user: ${message.message}`);
+      for (const entry of event.delta.payload?.entries ?? []) {
+        rows.push(`${time(event.at)} ${entry.medium ?? 'inbox'} #${entry.id}: ${entry.subject}`);
       }
     }
     if (event.type === 'cli_message') {
-      rows.push(`${time(event.at)} agent: ${event.message}`);
+      const reply = event.replyToId ? ` -> #${event.replyToId}` : '';
+      rows.push(`${time(event.at)} agent${reply}: ${event.message}`);
     }
     if (event.type === 'sounding_finished' && event.text) {
       rows.push(`${time(event.at)} private: ${shortText(event.text, 500)}`);
@@ -187,7 +188,7 @@ function renderMirror(events: EventRecord[]): string {
 
   const deltas = (latestSounding.deltas ?? [])
     .slice(-8)
-    .map((delta: any) => `  ${delta.stream} ${shortJson(delta.payload, 220)}`)
+    .map((delta: any) => `  ${delta.stream} ${formatDeltaPayload(delta.payload)}`)
     .join('\n');
 
   return [
@@ -265,6 +266,18 @@ function extractToolRows(events: EventRecord[]): string[] {
     }
   }
   return rows;
+}
+
+function formatDeltaPayload(payload: any): string {
+  if (Array.isArray(payload?.entries)) {
+    return shortText(
+      payload.entries
+        .map((entry: any) => `#${entry.id} ${entry.medium ?? 'message'}: ${entry.subject} (${entry.hint})`)
+        .join(' | '),
+      300,
+    );
+  }
+  return shortJson(payload, 220);
 }
 
 function time(value: unknown): string {

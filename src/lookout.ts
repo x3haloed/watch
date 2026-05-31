@@ -250,25 +250,65 @@ export class Lookout {
         }),
         execute: async ({ name, file_path: filePath }) => this.skills.view(name, filePath),
       }),
-      send_cli_message: tool({
+      open_message: tool({
         description:
-          'Send a user-facing message to the attached CLI. Use this for communication with the CLI user; final assistant text is private working speech and is not routed to the user.',
-        inputSchema: jsonSchema<{ message: string }>({
+          'Open a message by global ID from an inbox Sounding. Use this when an inbox entry says to call open_message with an ID.',
+        inputSchema: jsonSchema<{ id: number }>({
           type: 'object',
           properties: {
-            message: { type: 'string', description: 'Message to show in the CLI message pane.' },
+            id: { type: 'number', description: 'Global message ID from an inbox Sounding entry.' },
           },
-          required: ['message'],
+          required: ['id'],
           additionalProperties: false,
         }),
-        execute: async ({ message }) => {
+        execute: async ({ id }) => {
+          const message = this.streams.getMessage(id);
+          if (!message) {
+            return { ok: false, error: `Message not found: ${id}` };
+          }
+          return {
+            ok: true,
+            message: {
+              id: message.id,
+              medium: message.medium,
+              source: message.source,
+              subject: message.subject,
+              receivedAt: message.receivedAt,
+              content: message.content,
+            },
+            next_actions: [
+              `To reply to this message, call send_message with medium "${message.medium}", replyToId ${message.id}, and your message content.`,
+              'If no reply is needed, continue monitoring.',
+            ],
+          };
+        },
+      }),
+      send_message: tool({
+        description:
+          'Send a user-facing message to an external medium. Use this for communication; final assistant text is private working speech and is not routed to the user.',
+        inputSchema: jsonSchema<{ medium: string; message: string; replyToId?: number }>({
+          type: 'object',
+          properties: {
+            medium: { type: 'string', description: 'Destination medium, for example "cli".' },
+            message: { type: 'string', description: 'Message to send.' },
+            replyToId: { type: 'number', description: 'Optional global message ID being replied to.' },
+          },
+          required: ['medium', 'message'],
+          additionalProperties: false,
+        }),
+        execute: async ({ medium, message, replyToId }) => {
+          if (medium !== 'cli') {
+            return { ok: false, error: `Unsupported medium: ${medium}`, supportedMedia: ['cli'] };
+          }
           this.log.append({
             type: 'cli_message',
             at: new Date().toISOString(),
             soundingId: sounding.id,
+            medium,
+            replyToId,
             message,
           });
-          return { ok: true, delivered: 'cli' };
+          return { ok: true, delivered: medium, replyToId };
         },
       }),
       subscribe_stream: tool({
@@ -405,7 +445,8 @@ ${deltas || '(none)'}
 const LOOKOUT_INSTRUCTIONS = `You are the Lookout inside Watch.
 Watch is a continuous agent harness. You do not wait for user prompts; you receive Soundings from the CFF loop.
 Treat incoming user messages as inbox deltas, not commands that automatically define your next action.
-If you want to communicate with the CLI user, call send_cli_message. Your final assistant text is private working speech and is not delivered to the user.
+Inbox deltas are indexes, not full messages. When an inbox entry says to call open_message with an ID, call open_message to read it.
+If you want to communicate externally, call send_message with a medium such as "cli". Your final assistant text is private working speech and is not delivered to the user.
 Use subscribe_stream and unsubscribe_stream to control your gaze.
 Use handle_with_model when the current Sounding calls for a different model substrate.
 Do not narrate internal routing unless it matters to an external observer.`;

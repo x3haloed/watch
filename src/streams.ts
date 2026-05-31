@@ -1,5 +1,14 @@
 import type { JsonObject, ModelCapabilities, StreamDelta } from './types.js';
 
+export type StoredMessage = {
+  id: number;
+  medium: string;
+  source: string;
+  subject: string;
+  content: string;
+  receivedAt: string;
+};
+
 export type StreamPopContext = {
   now: Date;
   capabilities: ModelCapabilities;
@@ -42,30 +51,53 @@ class ClockStream implements WatchStream {
 
 class InboxStream implements WatchStream {
   readonly name = 'inbox';
-  private messages: JsonObject[] = [];
+  private pendingIds: number[] = [];
+
+  constructor(private readonly messages: MessageStore) {}
 
   push(payload: JsonObject): void {
-    this.messages.push({ ...payload, receivedAt: new Date().toISOString() });
+    const message = this.messages.add({
+      medium: String(payload.medium ?? payload.source ?? 'cli'),
+      source: String(payload.source ?? payload.medium ?? 'cli'),
+      subject: typeof payload.subject === 'string' ? payload.subject : undefined,
+      content: String(payload.message ?? payload.content ?? ''),
+    });
+    this.pendingIds.push(message.id);
   }
 
   hasDelta(): boolean {
-    return this.messages.length > 0;
+    return this.pendingIds.length > 0;
   }
 
   popDelta({ now }: StreamPopContext): StreamDelta | undefined {
-    if (this.messages.length === 0) {
+    if (this.pendingIds.length === 0) {
       return undefined;
     }
 
-    const messages = this.messages;
-    this.messages = [];
+    const ids = this.pendingIds;
+    this.pendingIds = [];
+    const entries = ids.flatMap(id => {
+      const message = this.messages.get(id);
+      return message
+        ? [
+            {
+              id: message.id,
+              medium: message.medium,
+              source: message.source,
+              subject: message.subject,
+              receivedAt: message.receivedAt,
+              hint: `Call open_message with id ${message.id} to read the full message. To reply after reading, call send_message with medium "${message.medium}" and replyToId ${message.id}.`,
+            },
+          ]
+        : [];
+    });
 
     return {
       stream: this.name,
       at: now.toISOString(),
       payload: {
-        count: messages.length,
-        messages,
+        count: entries.length,
+        entries,
       },
     };
   }
@@ -105,9 +137,10 @@ class BufferedStream implements WatchStream {
 }
 
 export class StreamRegistry {
+  private readonly messages = new MessageStore();
   private readonly streams = new Map<string, WatchStream>([
     ['clock', new ClockStream()],
-    ['inbox', new InboxStream()],
+    ['inbox', new InboxStream(this.messages)],
   ]);
   private readonly subscriptions = new Set<string>(['clock', 'inbox']);
 
@@ -161,6 +194,40 @@ export class StreamRegistry {
   hasPending(now = new Date()): boolean {
     return [...this.streams.values()].some(stream => this.isSubscribed(stream.name) && stream.hasDelta(now));
   }
+
+  getMessage(id: number): StoredMessage | undefined {
+    return this.messages.get(id);
+  }
+}
+
+class MessageStore {
+  private nextId = 1;
+  private readonly messages = new Map<number, StoredMessage>();
+
+  add(input: { medium: string; source: string; subject?: string; content: string }): StoredMessage {
+    const id = this.nextId++;
+    const content = input.content;
+    const message: StoredMessage = {
+      id,
+      medium: input.medium,
+      source: input.source,
+      subject: input.subject?.trim() || preview(content),
+      content,
+      receivedAt: new Date().toISOString(),
+    };
+    this.messages.set(id, message);
+    return message;
+  }
+
+  get(id: number): StoredMessage | undefined {
+    return this.messages.get(id);
+  }
+}
+
+function preview(content: string): string {
+  const text = content.replace(/\s+/g, ' ').trim();
+  if (!text) return '(empty message)';
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
 
 function deliveryModeFor(stream: string, capabilities: ModelCapabilities): string {

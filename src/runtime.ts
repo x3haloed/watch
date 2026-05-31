@@ -55,6 +55,7 @@ export class WatchRuntime {
 
     if (request.command === 'send') {
       const accepted = this.streams.push('inbox', {
+        medium: request.source ?? 'cli',
         source: request.source ?? 'cli',
         message: request.message,
       });
