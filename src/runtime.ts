@@ -18,11 +18,12 @@ export class WatchRuntime {
   private soundingActive = false;
   private soundQueued = false;
   private queuedTrigger: Sounding['trigger'] = 'delta';
+  private activeAbortController: AbortController | undefined;
 
   constructor(private readonly config: WatchConfig) {
     this.log = new EventLog(config.repoRoot);
     this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
-    this.lookout = new Lookout(this.streams, this.log, this.models, config.noModel);
+    this.lookout = new Lookout(this.streams, this.log, this.models, config.noModel, config.repoRoot);
   }
 
   start(): void {
@@ -39,6 +40,8 @@ export class WatchRuntime {
     this.running = false;
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.clockTimer) clearInterval(this.clockTimer);
+    this.soundQueued = false;
+    this.activeAbortController?.abort(reason);
     this.log.append({ type: 'daemon_stopped', at: new Date().toISOString(), reason });
   }
 
@@ -77,6 +80,7 @@ export class WatchRuntime {
           subscriptions: this.streams.listSubscriptions(),
           minCffMs: this.config.minCffMs,
           maxCffMs: this.config.maxCffMs,
+          modelTimeoutMs: this.config.modelTimeoutMs,
           noModel: this.config.noModel,
           soundingActive: this.soundingActive,
           soundQueued: this.soundQueued,
@@ -143,11 +147,15 @@ export class WatchRuntime {
 
     try {
       while (nextTrigger) {
+        if (!this.running) {
+          break;
+        }
         this.soundQueued = false;
         const activeTrigger = nextTrigger;
         nextTrigger = undefined;
 
         const model = await this.models.getActive();
+        const availability = this.config.noModel ? { ok: true as const } : await this.models.checkAvailable(model);
         const now = Date.now();
         const popAt = new Date(now);
         const deltas = this.streams.popDeltas({ now: popAt, capabilities: model.capabilities });
@@ -167,8 +175,30 @@ export class WatchRuntime {
         this.lastSoundingAt = now;
         this.log.append({ type: 'sounding_started', at: new Date().toISOString(), sounding });
 
+        if (!availability.ok) {
+          this.log.append({
+            type: 'model_unavailable',
+            at: new Date().toISOString(),
+            soundingId: sounding.id,
+            modelId: model.id,
+            reason: availability.reason,
+          });
+          this.log.append({
+            type: 'sounding_failed',
+            at: new Date().toISOString(),
+            soundingId: sounding.id,
+            modelId: model.id,
+            error: { name: 'ModelUnavailable', message: availability.reason },
+          });
+          continue;
+        }
+
         try {
-          const text = await this.lookout.receive(sounding);
+          this.activeAbortController = new AbortController();
+          const text = await this.lookout.receive(sounding, {
+            abortSignal: this.activeAbortController.signal,
+            timeoutMs: this.config.modelTimeoutMs,
+          });
           this.log.append({
             type: 'sounding_finished',
             at: new Date().toISOString(),
@@ -177,6 +207,15 @@ export class WatchRuntime {
             text,
           });
         } catch (error) {
+          if (isAbortError(error) || this.activeAbortController?.signal.aborted) {
+            this.log.append({
+              type: 'model_aborted',
+              at: new Date().toISOString(),
+              soundingId: sounding.id,
+              modelId: this.lookout.modelId,
+              reason: abortReason(this.activeAbortController?.signal.reason),
+            });
+          }
           this.log.append({
             type: 'sounding_failed',
             at: new Date().toISOString(),
@@ -184,9 +223,11 @@ export class WatchRuntime {
             modelId: this.lookout.modelId,
             error: errorToJson(error),
           });
+        } finally {
+          this.activeAbortController = undefined;
         }
 
-        if (this.soundQueued || this.streams.hasPending()) {
+        if (this.running && (this.soundQueued || this.streams.hasPending())) {
           nextTrigger = this.queuedTrigger;
           this.queuedTrigger = 'delta';
         }
@@ -195,6 +236,14 @@ export class WatchRuntime {
       this.soundingActive = false;
     }
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name);
+}
+
+function abortReason(reason: unknown): string {
+  return typeof reason === 'string' ? reason : reason instanceof Error ? reason.message : 'aborted';
 }
 
 function errorToJson(error: unknown): Record<string, unknown> {

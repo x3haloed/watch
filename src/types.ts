@@ -4,6 +4,7 @@ export type WatchConfig = {
   repoRoot: string;
   minCffMs: number;
   maxCffMs: number;
+  modelTimeoutMs: number;
   defaultModel: string;
   availableModels: string[];
   noModel: boolean;
@@ -67,6 +68,8 @@ export type WatchEvent =
   | { type: 'model_step_finished'; at: string; soundingId: string; modelId: string; step: JsonObject }
   | { type: 'model_finished'; at: string; soundingId: string; modelId: string; result: JsonObject }
   | { type: 'model_error'; at: string; soundingId: string; modelId: string; error: JsonObject }
+  | { type: 'model_aborted'; at: string; soundingId: string; modelId: string; reason: string }
+  | { type: 'model_unavailable'; at: string; soundingId: string; modelId: string; reason: string }
   | { type: 'model_reroute'; at: string; soundingId: string; fromModelId: string; toModelId: string; params: JsonObject }
   | { type: 'subscription_changed'; at: string; stream: string; subscribed: boolean }
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }

@@ -4,6 +4,9 @@ import type { ResolvedModel, Sounding } from './types.js';
 import { StreamRegistry } from './streams.js';
 import { EventLog } from './event-log.js';
 import { ModelRegistry } from './model-registry.js';
+import { buildContextPrompt } from './context-files.js';
+import { RepoFileTools } from './file-tools.js';
+import { SkillLibrary } from './skills.js';
 
 export class ModelReroute extends Error {
   constructor(readonly toModelId: string, readonly model: ResolvedModel, readonly params: Record<string, unknown>) {
@@ -13,19 +16,30 @@ export class ModelReroute extends Error {
 
 export class Lookout {
   private readonly messages: ModelMessage[] = [];
+  private readonly fileTools: RepoFileTools;
+  private readonly skills: SkillLibrary;
+  private readonly contextPrompt: Promise<string>;
 
   constructor(
     private readonly streams: StreamRegistry,
     private readonly log: EventLog,
     private readonly models: ModelRegistry,
     private readonly noModel: boolean,
-  ) {}
+    repoRoot: string,
+  ) {
+    this.fileTools = new RepoFileTools(repoRoot);
+    this.skills = new SkillLibrary(repoRoot);
+    this.contextPrompt = buildContextPrompt(repoRoot);
+  }
 
   get modelId(): string {
     return this.models.activeId;
   }
 
-  async receive(sounding: Sounding): Promise<string> {
+  async receive(
+    sounding: Sounding,
+    options: { abortSignal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<string> {
     const missingKey = requiredApiKeyEnv(sounding.model);
     if (this.noModel || missingKey) {
       const reason = this.noModel ? 'no-model mode is enabled' : `${missingKey} is not set`;
@@ -52,7 +66,7 @@ export class Lookout {
     while (attempts < 3) {
       attempts += 1;
       try {
-        return await this.runOnce(currentSounding, activeModel, reroute);
+        return await this.runOnce(currentSounding, activeModel, reroute, options);
       } catch (error) {
         if (!(error instanceof ModelReroute)) {
           throw error;
@@ -84,6 +98,7 @@ export class Lookout {
     sounding: Sounding,
     model: ResolvedModel,
     reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
+    options: { abortSignal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<string> {
     const prompt = this.formatSounding(sounding, model, reroute);
     this.messages.push({ role: 'user', content: prompt });
@@ -91,7 +106,7 @@ export class Lookout {
     try {
       const agent = new ToolLoopAgent({
         model: this.models.createLanguageModel(model),
-        instructions: LOOKOUT_INSTRUCTIONS,
+        instructions: await this.instructions(),
         tools: this.createTools(sounding),
         stopWhen: stepCountIs(20),
         onStepFinish: step => {
@@ -116,6 +131,8 @@ export class Lookout {
 
       const result = await agent.generate({
         messages: this.messages,
+        abortSignal: options.abortSignal,
+        timeout: options.timeoutMs,
       });
 
       this.messages.push({ role: 'assistant', content: result.text });
@@ -138,6 +155,101 @@ export class Lookout {
 
   private createTools(sounding: Sounding) {
     return {
+      read_file: tool({
+        description: 'Read a UTF-8 text file inside the repo with line numbers and pagination.',
+        inputSchema: jsonSchema<{ path: string; offset?: number; limit?: number }>({
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Repo-relative path to read.' },
+            offset: { type: 'number', description: '1-based starting line. Defaults to 1.' },
+            limit: { type: 'number', description: 'Maximum lines to return. Defaults to 500, max 1000.' },
+          },
+          required: ['path'],
+          additionalProperties: false,
+        }),
+        execute: async ({ path, offset, limit }) => this.fileTools.readFile(path, offset, limit),
+      }),
+      write_file: tool({
+        description:
+          'Create a UTF-8 text file inside the repo. This refuses to overwrite by default. For edits or appends to an existing file, use patch instead. Set overwrite=true only when intentionally replacing the entire file.',
+        inputSchema: jsonSchema<{ path: string; content: string; overwrite?: boolean }>({
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Repo-relative path to write.' },
+            content: { type: 'string', description: 'Complete file content to write.' },
+            overwrite: {
+              type: 'boolean',
+              description:
+                'Defaults to false. Must be true to replace an existing file. Do not use for appends or small edits; use patch.',
+            },
+          },
+          required: ['path', 'content'],
+          additionalProperties: false,
+        }),
+        execute: async ({ path, content, overwrite }) => this.fileTools.writeFile(path, content, overwrite),
+      }),
+      search_files: tool({
+        description: 'Search repo files by content using ripgrep, or list file paths containing a substring.',
+        inputSchema: jsonSchema<{
+          pattern: string;
+          target?: 'content' | 'files';
+          path?: string;
+          fileGlob?: string;
+          limit?: number;
+        }>({
+          type: 'object',
+          properties: {
+            pattern: { type: 'string', description: 'Regex pattern for content search, or substring for file search.' },
+            target: { type: 'string', enum: ['content', 'files'], description: 'Search content or file paths. Defaults to content.' },
+            path: { type: 'string', description: 'Repo-relative directory or file to search. Defaults to repo root.' },
+            fileGlob: { type: 'string', description: 'Optional ripgrep glob, for example *.ts.' },
+            limit: { type: 'number', description: 'Maximum matches. Defaults to 50, max 200.' },
+          },
+          required: ['pattern'],
+          additionalProperties: false,
+        }),
+        execute: async input => this.fileTools.searchFiles(input),
+      }),
+      patch: tool({
+        description: 'Replace an exact string in a repo file. Use read_file first so old_string matches exactly.',
+        inputSchema: jsonSchema<{ path: string; old_string: string; new_string: string; replace_all?: boolean }>({
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Repo-relative file path to patch.' },
+            old_string: { type: 'string', description: 'Exact text to replace.' },
+            new_string: { type: 'string', description: 'Replacement text.' },
+            replace_all: { type: 'boolean', description: 'Replace every occurrence instead of requiring a unique match.' },
+          },
+          required: ['path', 'old_string', 'new_string'],
+          additionalProperties: false,
+        }),
+        execute: async ({ path, old_string: oldString, new_string: newString, replace_all: replaceAll }) =>
+          this.fileTools.patch(path, oldString, newString, replaceAll),
+      }),
+      skills_list: tool({
+        description: 'List available SKILL.md skills with short metadata. Use skill_view to load full instructions.',
+        inputSchema: jsonSchema<{ category?: string }>({
+          type: 'object',
+          properties: {
+            category: { type: 'string', description: 'Optional category filter.' },
+          },
+          additionalProperties: false,
+        }),
+        execute: async ({ category }) => this.skills.list(category),
+      }),
+      skill_view: tool({
+        description: 'Load a skill SKILL.md, or a linked file inside that skill directory.',
+        inputSchema: jsonSchema<{ name: string; file_path?: string }>({
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Skill name, directory name, or skill path from skills_list.' },
+            file_path: { type: 'string', description: 'Optional relative path inside the skill directory.' },
+          },
+          required: ['name'],
+          additionalProperties: false,
+        }),
+        execute: async ({ name, file_path: filePath }) => this.skills.view(name, filePath),
+      }),
       subscribe_stream: tool({
         description: 'Begin watching a stream. Subscription changes persist across future Soundings.',
         inputSchema: jsonSchema<{ stream: string }>({
@@ -221,6 +333,11 @@ export class Lookout {
         }),
       }),
     };
+  }
+
+  private async instructions(): Promise<string> {
+    const context = await this.contextPrompt;
+    return context ? `${LOOKOUT_INSTRUCTIONS}\n\n${context}` : LOOKOUT_INSTRUCTIONS;
   }
 
   private formatSounding(

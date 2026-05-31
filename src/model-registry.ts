@@ -151,6 +151,33 @@ export class ModelRegistry {
     })(model.model) as LanguageModel;
   }
 
+  async checkAvailable(model: ResolvedModel): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if (model.provider !== 'openai-compatible' || !model.baseURL) {
+      return { ok: true };
+    }
+
+    const url = `${model.baseURL.replace(/\/$/, '')}/models`;
+    try {
+      const response = await fetch(url, {
+        headers: authHeaders(model),
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (!response.ok) {
+        return { ok: false, reason: `/models returned ${response.status}` };
+      }
+      const payload = (await response.json()) as { data?: Array<{ id?: string }> };
+      const ids = (payload.data ?? []).map(entry => entry.id).filter((id): id is string => Boolean(id));
+      if (model.model === 'auto') {
+        return ids.length > 0 ? { ok: true } : { ok: false, reason: '/models returned no models' };
+      }
+      return ids.includes(model.model)
+        ? { ok: true }
+        : { ok: false, reason: `model ${model.model} not found in /models (${ids.join(', ') || 'none'})` };
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   private async resolveCapabilities(model: ModelConfig): Promise<ModelCapabilities> {
     const fromModelsDev = await this.lookupModelsDev(model);
     const fallback = conservativeCapabilities(model.provider);
@@ -268,6 +295,11 @@ function inferModelConfig(id: string): ModelConfig {
 
 function readApiKey(envName?: string): string {
   return envName ? process.env[envName]?.trim() ?? '' : '';
+}
+
+function authHeaders(model: ResolvedModel): Record<string, string> {
+  const apiKey = readApiKey(model.apiKeyEnv);
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
 }
 
 function modelsDevProviderId(model: ModelConfig): string | undefined {
