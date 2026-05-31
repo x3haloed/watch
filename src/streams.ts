@@ -1,10 +1,15 @@
-import type { JsonObject, StreamDelta } from './types.js';
+import type { JsonObject, ModelCapabilities, StreamDelta } from './types.js';
+
+export type StreamPopContext = {
+  now: Date;
+  capabilities: ModelCapabilities;
+};
 
 export interface WatchStream {
   readonly name: string;
   push(payload: JsonObject): void;
   hasDelta(now: Date): boolean;
-  popDelta(now: Date): StreamDelta | undefined;
+  popDelta(context: StreamPopContext): StreamDelta | undefined;
 }
 
 class ClockStream implements WatchStream {
@@ -20,16 +25,16 @@ class ClockStream implements WatchStream {
     return now.toISOString().slice(0, 19) !== this.lastPoppedSecond;
   }
 
-  popDelta(now: Date): StreamDelta {
+  popDelta({ now }: StreamPopContext): StreamDelta {
     const iso = now.toISOString();
     this.lastPoppedSecond = iso.slice(0, 19);
     return {
       stream: this.name,
       at: iso,
       payload: {
+        ...this.current,
         iso,
         epochMs: now.getTime(),
-        ...this.current,
       },
     };
   }
@@ -47,7 +52,7 @@ class InboxStream implements WatchStream {
     return this.messages.length > 0;
   }
 
-  popDelta(now: Date): StreamDelta | undefined {
+  popDelta({ now }: StreamPopContext): StreamDelta | undefined {
     if (this.messages.length === 0) {
       return undefined;
     }
@@ -79,7 +84,7 @@ class BufferedStream implements WatchStream {
     return this.payloads.length > 0;
   }
 
-  popDelta(now: Date): StreamDelta | undefined {
+  popDelta({ now, capabilities }: StreamPopContext): StreamDelta | undefined {
     if (this.payloads.length === 0) {
       return undefined;
     }
@@ -92,6 +97,7 @@ class BufferedStream implements WatchStream {
       at: now.toISOString(),
       payload: {
         count: payloads.length,
+        delivery: deliveryModeFor(this.name, capabilities),
         items: payloads,
       },
     };
@@ -140,14 +146,14 @@ export class StreamRegistry {
     return true;
   }
 
-  popDeltas(now = new Date()): StreamDelta[] {
+  popDeltas(context: StreamPopContext): StreamDelta[] {
     return [...this.streams.values()]
       .filter(stream => this.isSubscribed(stream.name))
       .flatMap(stream => {
-        if (!stream.hasDelta(now)) {
+        if (!stream.hasDelta(context.now)) {
           return [];
         }
-        const delta = stream.popDelta(now);
+        const delta = stream.popDelta(context);
         return delta ? [delta] : [];
       });
   }
@@ -155,4 +161,16 @@ export class StreamRegistry {
   hasPending(now = new Date()): boolean {
     return [...this.streams.values()].some(stream => this.isSubscribed(stream.name) && stream.hasDelta(now));
   }
+}
+
+function deliveryModeFor(stream: string, capabilities: ModelCapabilities): string {
+  if (stream === 'video') {
+    if (capabilities.video) return 'video';
+    if (capabilities.images) return 'sampled-frames';
+    return 'metadata-only';
+  }
+  if (stream === 'audio') {
+    return capabilities.audio ? 'audio' : 'metadata-only';
+  }
+  return 'raw-buffer';
 }

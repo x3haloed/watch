@@ -1,36 +1,34 @@
-import { ToolLoopAgent, gateway, jsonSchema, stepCountIs, tool } from 'ai';
-import type { LanguageModel, ModelMessage } from 'ai';
-import type { Sounding } from './types.js';
+import { ToolLoopAgent, jsonSchema, stepCountIs, tool } from 'ai';
+import type { ModelMessage } from 'ai';
+import type { ResolvedModel, Sounding } from './types.js';
 import { StreamRegistry } from './streams.js';
 import { EventLog } from './event-log.js';
+import { ModelRegistry } from './model-registry.js';
 
 export class ModelReroute extends Error {
-  constructor(readonly toModelId: string, readonly params: Record<string, unknown>) {
+  constructor(readonly toModelId: string, readonly model: ResolvedModel, readonly params: Record<string, unknown>) {
     super(`Reroute current Sounding to ${toModelId}`);
   }
 }
 
 export class Lookout {
   private readonly messages: ModelMessage[] = [];
-  private activeModelId: string;
 
   constructor(
     private readonly streams: StreamRegistry,
     private readonly log: EventLog,
-    private readonly availableModels: string[],
-    initialModelId: string,
+    private readonly models: ModelRegistry,
     private readonly noModel: boolean,
-  ) {
-    this.activeModelId = initialModelId;
-  }
+  ) {}
 
   get modelId(): string {
-    return this.activeModelId;
+    return this.models.activeId;
   }
 
   async receive(sounding: Sounding): Promise<string> {
-    if (this.noModel || !process.env.AI_GATEWAY_API_KEY) {
-      const reason = this.noModel ? 'no-model mode is enabled' : 'AI_GATEWAY_API_KEY is not set';
+    const missingKey = requiredApiKeyEnv(sounding.model);
+    if (this.noModel || missingKey) {
+      const reason = this.noModel ? 'no-model mode is enabled' : `${missingKey} is not set`;
       this.log.append({
         type: 'model_skipped',
         at: new Date().toISOString(),
@@ -42,6 +40,7 @@ export class Lookout {
 
     let attempts = 0;
     let currentSounding = sounding;
+    let activeModel = sounding.model;
     let reroute:
       | {
           fromModelId: string;
@@ -53,14 +52,14 @@ export class Lookout {
     while (attempts < 3) {
       attempts += 1;
       try {
-        return await this.runOnce(currentSounding, reroute);
+        return await this.runOnce(currentSounding, activeModel, reroute);
       } catch (error) {
         if (!(error instanceof ModelReroute)) {
           throw error;
         }
 
-        const fromModelId = this.activeModelId;
-        this.activeModelId = error.toModelId;
+        const fromModelId = activeModel.id;
+        activeModel = error.model;
         reroute = {
           fromModelId,
           toModelId: error.toModelId,
@@ -74,7 +73,7 @@ export class Lookout {
           toModelId: error.toModelId,
           params: error.params,
         });
-        currentSounding = { ...currentSounding, modelId: error.toModelId };
+        currentSounding = { ...currentSounding, modelId: error.toModelId, model: error.model };
       }
     }
 
@@ -83,14 +82,15 @@ export class Lookout {
 
   private async runOnce(
     sounding: Sounding,
+    model: ResolvedModel,
     reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
   ): Promise<string> {
-    const prompt = this.formatSounding(sounding, reroute);
+    const prompt = this.formatSounding(sounding, model, reroute);
     this.messages.push({ role: 'user', content: prompt });
 
     try {
       const agent = new ToolLoopAgent({
-        model: gateway(this.activeModelId) as LanguageModel,
+        model: this.models.createLanguageModel(model),
         instructions: LOOKOUT_INSTRUCTIONS,
         tools: this.createTools(sounding),
         stopWhen: stepCountIs(20),
@@ -169,10 +169,16 @@ export class Lookout {
           additionalProperties: false,
         }),
         execute: async ({ modelId }) => {
-          if (!this.availableModels.includes(modelId)) {
-            return { ok: false, error: `Unknown model: ${modelId}`, availableModels: this.availableModels };
+          if (!this.models.listModelIds().includes(modelId)) {
+            return { ok: false, error: `Unknown model: ${modelId}`, availableModels: this.models.listModelIds() };
           }
-          throw new ModelReroute(modelId, { modelId });
+          let model: ResolvedModel;
+          try {
+            model = await this.models.switchTo(modelId);
+          } catch (error) {
+            return { ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+          throw new ModelReroute(modelId, model, { modelId });
         },
       }),
       report_gaze: tool({
@@ -193,6 +199,7 @@ export class Lookout {
 
   private formatSounding(
     sounding: Sounding,
+    model: ResolvedModel,
     reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
   ): string {
     const deltas = sounding.deltas
@@ -215,9 +222,12 @@ sounding_id: ${sounding.id}
 last_flicker_ms: ${sounding.lastFlickerMs}
 trigger: ${sounding.trigger}
 clock: ${sounding.at}
-active_model: ${this.activeModelId}
+active_model: ${model.id}
+active_provider: ${model.provider}
+active_provider_model: ${model.model}
+active_model_capabilities: ${JSON.stringify(model.capabilities)}
 available-models:
-${this.availableModels.map(model => `- ${model}`).join('\n')}
+${this.models.listModelIds().map(id => `- ${id}`).join('\n')}
 subscriptions:
 ${this.streams.listSubscriptions().map(stream => `- ${stream}`).join('\n')}
 [/cff_system]
@@ -234,3 +244,11 @@ Treat incoming user messages as inbox deltas, not commands that automatically de
 Use subscribe_stream and unsubscribe_stream to control your gaze.
 Use handle_with_model when the current Sounding calls for a different model substrate.
 Do not narrate internal routing unless it matters to an external observer.`;
+
+function requiredApiKeyEnv(model: ResolvedModel): string | undefined {
+  if (model.provider === 'openai-compatible' && model.baseURL?.includes('localhost')) {
+    return undefined;
+  }
+  const envName = model.apiKeyEnv ?? (model.provider === 'openrouter' ? 'OPENROUTER_API_KEY' : undefined);
+  return envName && !process.env[envName]?.trim() ? envName : undefined;
+}

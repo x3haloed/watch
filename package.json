@@ -17,6 +17,7 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^2.0.48",
     "ai": "^6.0.193"
   },
   "devDependencies": {

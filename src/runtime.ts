@@ -3,11 +3,13 @@ import type { ControlRequest, ControlResponse, Sounding, WatchConfig } from './t
 import { EventLog } from './event-log.js';
 import { Lookout } from './lookout.js';
 import { StreamRegistry } from './streams.js';
+import { ModelRegistry } from './model-registry.js';
 
 export class WatchRuntime {
   private readonly streams = new StreamRegistry();
   private readonly log: EventLog;
   private readonly lookout: Lookout;
+  private readonly models: ModelRegistry;
   private lastSoundingAt = Date.now();
   private running = false;
   private tickTimer: NodeJS.Timeout | undefined;
@@ -19,7 +21,8 @@ export class WatchRuntime {
 
   constructor(private readonly config: WatchConfig) {
     this.log = new EventLog(config.repoRoot);
-    this.lookout = new Lookout(this.streams, this.log, config.availableModels, config.modelId, config.noModel);
+    this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
+    this.lookout = new Lookout(this.streams, this.log, this.models, config.noModel);
   }
 
   start(): void {
@@ -69,6 +72,8 @@ export class WatchRuntime {
         data: {
           pid: process.pid,
           modelId: this.lookout.modelId,
+          availableModels: this.models.listModelIds(),
+          activeModel: await this.models.getActive(),
           subscriptions: this.streams.listSubscriptions(),
           minCffMs: this.config.minCffMs,
           maxCffMs: this.config.maxCffMs,
@@ -142,9 +147,10 @@ export class WatchRuntime {
         const activeTrigger = nextTrigger;
         nextTrigger = undefined;
 
+        const model = await this.models.getActive();
         const now = Date.now();
         const popAt = new Date(now);
-        const deltas = this.streams.popDeltas(popAt);
+        const deltas = this.streams.popDeltas({ now: popAt, capabilities: model.capabilities });
         for (const delta of deltas) {
           this.log.append({ type: 'stream_delta', at: new Date().toISOString(), delta });
         }
@@ -155,7 +161,8 @@ export class WatchRuntime {
           lastFlickerMs: now - this.lastSoundingAt,
           trigger: activeTrigger,
           deltas,
-          modelId: this.lookout.modelId,
+          modelId: model.id,
+          model,
         };
         this.lastSoundingAt = now;
         this.log.append({ type: 'sounding_started', at: new Date().toISOString(), sounding });

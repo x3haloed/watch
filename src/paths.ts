@@ -18,3 +18,15 @@ export function socketPath(repoRoot: string): string {
 export function eventLogPath(repoRoot: string): string {
   return join(watchDir(repoRoot), 'events.jsonl');
 }
+
+export function statePath(repoRoot: string): string {
+  return join(watchDir(repoRoot), 'state.json');
+}
+
+export function modelsDevCachePath(repoRoot: string): string {
+  return join(watchDir(repoRoot), 'models-dev-cache.json');
+}
+
+export function configPath(repoRoot: string): string {
+  return join(repoRoot, 'watch.config.json');
+}

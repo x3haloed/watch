@@ -53,8 +53,8 @@ function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
     repoRoot,
     minCffMs: numberFlag(args, '--min-cff-ms') ?? 2_000,
     maxCffMs: numberFlag(args, '--max-cff-ms') ?? 30_000,
-    modelId: stringFlag(args, '--model') ?? 'openai/gpt-4.1-mini',
-    availableModels: (stringFlag(args, '--models') ?? 'openai/gpt-4.1-mini,anthropic/claude-sonnet-4.5')
+    defaultModel: stringFlag(args, '--model') ?? 'openrouter:anthropic/claude-sonnet-4.5',
+    availableModels: (stringFlag(args, '--models') ?? '')
       .split(',')
       .map(model => model.trim())
       .filter(Boolean),

@@ -4,9 +4,38 @@ export type WatchConfig = {
   repoRoot: string;
   minCffMs: number;
   maxCffMs: number;
-  modelId: string;
+  defaultModel: string;
   availableModels: string[];
   noModel: boolean;
+};
+
+export type ModelProvider = 'openrouter' | 'openai-compatible';
+
+export type ModelCapabilities = {
+  tools: boolean;
+  text: boolean;
+  images: boolean;
+  audio: boolean;
+  video: boolean;
+  pdf: boolean;
+  reasoning?: boolean;
+  structuredOutput?: boolean;
+  contextTokens?: number;
+  outputTokens?: number;
+  source: string;
+};
+
+export type ModelConfig = {
+  id: string;
+  provider: ModelProvider;
+  model: string;
+  baseURL?: string;
+  apiKeyEnv?: string;
+  capabilities?: Partial<ModelCapabilities>;
+};
+
+export type ResolvedModel = ModelConfig & {
+  capabilities: ModelCapabilities;
 };
 
 export type StreamDelta = {
@@ -24,6 +53,7 @@ export type Sounding = {
   trigger: SoundingTrigger;
   deltas: StreamDelta[];
   modelId: string;
+  model: ResolvedModel;
 };
 
 export type WatchEvent =
