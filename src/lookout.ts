@@ -19,6 +19,7 @@ export class Lookout {
   private readonly fileTools: RepoFileTools;
   private readonly skills: SkillLibrary;
   private readonly contextPrompt: Promise<string>;
+  private readonly cwd: string;
 
   constructor(
     private readonly streams: StreamRegistry,
@@ -27,6 +28,7 @@ export class Lookout {
     private readonly noModel: boolean,
     repoRoot: string,
   ) {
+    this.cwd = repoRoot;
     this.fileTools = new RepoFileTools(repoRoot);
     this.skills = new SkillLibrary(repoRoot);
     this.contextPrompt = buildContextPrompt(repoRoot);
@@ -156,11 +158,11 @@ export class Lookout {
   private createTools(sounding: Sounding) {
     return {
       read_file: tool({
-        description: 'Read a UTF-8 text file inside the repo with line numbers and pagination.',
+        description: 'Read a UTF-8 text file with line numbers and pagination. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected.',
         inputSchema: jsonSchema<{ path: string; offset?: number; limit?: number }>({
           type: 'object',
           properties: {
-            path: { type: 'string', description: 'Repo-relative path to read.' },
+            path: { type: 'string', description: 'Path to read. Relative paths resolve from cwd; absolute paths are accepted.' },
             offset: { type: 'number', description: '1-based starting line. Defaults to 1.' },
             limit: { type: 'number', description: 'Maximum lines to return. Defaults to 500, max 1000.' },
           },
@@ -171,11 +173,11 @@ export class Lookout {
       }),
       write_file: tool({
         description:
-          'Create a UTF-8 text file inside the repo. This refuses to overwrite by default. For edits or appends to an existing file, use patch instead. Set overwrite=true only when intentionally replacing the entire file.',
+          'Create a UTF-8 text file. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected. This refuses to overwrite by default. For edits or appends to an existing file, use patch instead. Set overwrite=true only when intentionally replacing the entire file.',
         inputSchema: jsonSchema<{ path: string; content: string; overwrite?: boolean }>({
           type: 'object',
           properties: {
-            path: { type: 'string', description: 'Repo-relative path to write.' },
+            path: { type: 'string', description: 'Path to write. Relative paths resolve from cwd; absolute paths are accepted.' },
             content: { type: 'string', description: 'Complete file content to write.' },
             overwrite: {
               type: 'boolean',
@@ -189,7 +191,7 @@ export class Lookout {
         execute: async ({ path, content, overwrite }) => this.fileTools.writeFile(path, content, overwrite),
       }),
       search_files: tool({
-        description: 'Search repo files by content using ripgrep, or list file paths containing a substring.',
+        description: 'Search files by content using ripgrep, or list file paths containing a substring. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected.',
         inputSchema: jsonSchema<{
           pattern: string;
           target?: 'content' | 'files';
@@ -201,7 +203,7 @@ export class Lookout {
           properties: {
             pattern: { type: 'string', description: 'Regex pattern for content search, or substring for file search.' },
             target: { type: 'string', enum: ['content', 'files'], description: 'Search content or file paths. Defaults to content.' },
-            path: { type: 'string', description: 'Repo-relative directory or file to search. Defaults to repo root.' },
+            path: { type: 'string', description: 'Directory or file to search. Defaults to cwd. Relative paths resolve from cwd; absolute paths are accepted.' },
             fileGlob: { type: 'string', description: 'Optional ripgrep glob, for example *.ts.' },
             limit: { type: 'number', description: 'Maximum matches. Defaults to 50, max 200.' },
           },
@@ -211,11 +213,11 @@ export class Lookout {
         execute: async input => this.fileTools.searchFiles(input),
       }),
       patch: tool({
-        description: 'Replace an exact string in a repo file. Use read_file first so old_string matches exactly.',
+        description: 'Replace an exact string in a file. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected. Use read_file first so old_string matches exactly.',
         inputSchema: jsonSchema<{ path: string; old_string: string; new_string: string; replace_all?: boolean }>({
           type: 'object',
           properties: {
-            path: { type: 'string', description: 'Repo-relative file path to patch.' },
+            path: { type: 'string', description: 'Path to patch. Relative paths resolve from cwd; absolute paths are accepted.' },
             old_string: { type: 'string', description: 'Exact text to replace.' },
             new_string: { type: 'string', description: 'Replacement text.' },
             replace_all: { type: 'boolean', description: 'Replace every occurrence instead of requiring a unique match.' },
@@ -280,6 +282,30 @@ export class Lookout {
               `To reply to this message, call send_message with medium "${message.medium}", replyToId ${message.id}, and your message content.`,
               'If no reply is needed, continue monitoring.',
             ],
+          };
+        },
+      }),
+      message_page: tool({
+        description:
+          'List messages from a medium in pages. Returns IDs/previews only. Use open_message with an ID to read a full message.',
+        inputSchema: jsonSchema<{ medium: string; page?: number; pageSize?: number }>({
+          type: 'object',
+          properties: {
+            medium: { type: 'string', description: 'Message medium, for example "cli".' },
+            page: { type: 'number', description: '1-based page number. Defaults to 1.' },
+            pageSize: { type: 'number', description: 'Messages per page. Defaults to 10, max 50.' },
+          },
+          required: ['medium'],
+          additionalProperties: false,
+        }),
+        execute: async ({ medium, page = 1, pageSize = 10 }) => {
+          const result = this.streams.listMessages(medium, page, pageSize);
+          return {
+            ok: true,
+            medium,
+            ...result,
+            hint: 'Call open_message with an id to read a full message.',
+            nextPageHint: result.page < result.totalPages ? `Call message_page with medium "${medium}" and page ${result.page + 1} for the next page.` : undefined,
           };
         },
       }),
@@ -398,7 +424,8 @@ export class Lookout {
 
   private async instructions(): Promise<string> {
     const context = await this.contextPrompt;
-    return context ? `${LOOKOUT_INSTRUCTIONS}\n\n${context}` : LOOKOUT_INSTRUCTIONS;
+    const environment = `[environment]\ncwd: ${this.cwd}\nFilesystem tools accept relative paths from cwd and absolute paths. They reject parent traversal paths containing "..".\n[/environment]`;
+    return context ? `${LOOKOUT_INSTRUCTIONS}\n\n${environment}\n\n${context}` : `${LOOKOUT_INSTRUCTIONS}\n\n${environment}`;
   }
 
   private formatSounding(

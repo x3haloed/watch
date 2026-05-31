@@ -198,7 +198,19 @@ export class StreamRegistry {
   getMessage(id: number): StoredMessage | undefined {
     return this.messages.get(id);
   }
+
+  listMessages(medium: string, page = 1, pageSize = 10): { entries: MessageEntry[]; page: number; pageSize: number; total: number; totalPages: number } {
+    return this.messages.list(medium, page, pageSize);
+  }
 }
+
+export type MessageEntry = {
+  id: number;
+  medium: string;
+  source: string;
+  subject: string;
+  receivedAt: string;
+};
 
 class MessageStore {
   private nextId = 1;
@@ -221,6 +233,29 @@ class MessageStore {
 
   get(id: number): StoredMessage | undefined {
     return this.messages.get(id);
+  }
+
+  list(medium: string, page: number, pageSize: number): { entries: MessageEntry[]; page: number; pageSize: number; total: number; totalPages: number } {
+    const safePageSize = Math.max(1, Math.min(50, Math.floor(pageSize)));
+    const all = [...this.messages.values()]
+      .filter(message => message.medium === medium)
+      .sort((a, b) => b.id - a.id);
+    const totalPages = Math.max(1, Math.ceil(all.length / safePageSize));
+    const safePage = Math.max(1, Math.min(totalPages, Math.floor(page)));
+    const start = (safePage - 1) * safePageSize;
+    return {
+      entries: all.slice(start, start + safePageSize).map(message => ({
+        id: message.id,
+        medium: message.medium,
+        source: message.source,
+        subject: message.subject,
+        receivedAt: message.receivedAt,
+      })),
+      page: safePage,
+      pageSize: safePageSize,
+      total: all.length,
+      totalPages,
+    };
   }
 }
 
