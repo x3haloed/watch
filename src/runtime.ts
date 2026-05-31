@@ -13,10 +13,13 @@ export class WatchRuntime {
   private tickTimer: NodeJS.Timeout | undefined;
   private clockTimer: NodeJS.Timeout | undefined;
   private lastClockSecond = '';
+  private soundingActive = false;
+  private soundQueued = false;
+  private queuedTrigger: Sounding['trigger'] = 'delta';
 
   constructor(private readonly config: WatchConfig) {
     this.log = new EventLog(config.repoRoot);
-    this.lookout = new Lookout(this.streams, this.log, config.availableModels, config.modelId);
+    this.lookout = new Lookout(this.streams, this.log, config.availableModels, config.modelId, config.noModel);
   }
 
   start(): void {
@@ -45,14 +48,19 @@ export class WatchRuntime {
     });
 
     if (request.command === 'send') {
-      const delta = this.streams.push('inbox', {
+      const accepted = this.streams.push('inbox', {
         source: request.source ?? 'cli',
         message: request.message,
       });
-      if (delta) {
-        this.log.append({ type: 'stream_delta', at: new Date().toISOString(), delta });
+      if (accepted) {
+        this.log.append({
+          type: 'stream_buffered',
+          at: new Date().toISOString(),
+          stream: 'inbox',
+          payload: { source: request.source ?? 'cli' },
+        });
       }
-      return { ok: true, data: { accepted: Boolean(delta) } };
+      return { ok: true, data: { accepted } };
     }
 
     if (request.command === 'status') {
@@ -64,13 +72,16 @@ export class WatchRuntime {
           subscriptions: this.streams.listSubscriptions(),
           minCffMs: this.config.minCffMs,
           maxCffMs: this.config.maxCffMs,
+          noModel: this.config.noModel,
+          soundingActive: this.soundingActive,
+          soundQueued: this.soundQueued,
           pendingDeltas: this.streams.hasPending(),
         },
       };
     }
 
     if (request.command === 'sound') {
-      await this.sound('manual');
+      void this.sound('manual');
       return { ok: true };
     }
 
@@ -89,12 +100,17 @@ export class WatchRuntime {
       return;
     }
     this.lastClockSecond = second;
-    const delta = this.streams.push('clock', {
+    const accepted = this.streams.push('clock', {
       iso: now.toISOString(),
       epochMs: now.getTime(),
     });
-    if (delta) {
-      this.log.append({ type: 'stream_delta', at: new Date().toISOString(), delta });
+    if (accepted) {
+      this.log.append({
+        type: 'stream_buffered',
+        at: new Date().toISOString(),
+        stream: 'clock',
+        payload: { iso: now.toISOString(), epochMs: now.getTime() },
+      });
     }
   }
 
@@ -104,31 +120,62 @@ export class WatchRuntime {
     }
 
     const elapsed = Date.now() - this.lastSoundingAt;
+    const trigger = elapsed >= this.config.maxCffMs ? 'heartbeat' : 'delta';
     if ((elapsed >= this.config.minCffMs && this.streams.hasPending()) || elapsed >= this.config.maxCffMs) {
-      await this.sound(elapsed >= this.config.maxCffMs ? 'heartbeat' : 'delta');
+      void this.sound(trigger);
     }
   }
 
   private async sound(trigger: Sounding['trigger']): Promise<void> {
-    const now = Date.now();
-    const sounding: Sounding = {
-      id: randomUUID(),
-      at: new Date(now).toISOString(),
-      lastFlickerMs: now - this.lastSoundingAt,
-      trigger,
-      deltas: this.streams.drain(),
-      modelId: this.lookout.modelId,
-    };
-    this.lastSoundingAt = now;
-    this.log.append({ type: 'sounding_started', at: new Date().toISOString(), sounding });
+    if (this.soundingActive) {
+      this.soundQueued = true;
+      this.queuedTrigger = this.queuedTrigger === 'heartbeat' || trigger === 'heartbeat' ? 'heartbeat' : trigger;
+      return;
+    }
 
-    const text = await this.lookout.receive(sounding);
-    this.log.append({
-      type: 'sounding_finished',
-      at: new Date().toISOString(),
-      soundingId: sounding.id,
-      modelId: this.lookout.modelId,
-      text,
-    });
+    this.soundingActive = true;
+    let nextTrigger: Sounding['trigger'] | undefined = trigger;
+
+    try {
+      while (nextTrigger) {
+        this.soundQueued = false;
+        const activeTrigger = nextTrigger;
+        nextTrigger = undefined;
+
+        const now = Date.now();
+        const popAt = new Date(now);
+        const deltas = this.streams.popDeltas(popAt);
+        for (const delta of deltas) {
+          this.log.append({ type: 'stream_delta', at: new Date().toISOString(), delta });
+        }
+
+        const sounding: Sounding = {
+          id: randomUUID(),
+          at: popAt.toISOString(),
+          lastFlickerMs: now - this.lastSoundingAt,
+          trigger: activeTrigger,
+          deltas,
+          modelId: this.lookout.modelId,
+        };
+        this.lastSoundingAt = now;
+        this.log.append({ type: 'sounding_started', at: new Date().toISOString(), sounding });
+
+        const text = await this.lookout.receive(sounding);
+        this.log.append({
+          type: 'sounding_finished',
+          at: new Date().toISOString(),
+          soundingId: sounding.id,
+          modelId: this.lookout.modelId,
+          text,
+        });
+
+        if (this.soundQueued || this.streams.hasPending()) {
+          nextTrigger = this.queuedTrigger;
+          this.queuedTrigger = 'delta';
+        }
+      }
+    } finally {
+      this.soundingActive = false;
+    }
   }
 }

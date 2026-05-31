@@ -6,6 +6,7 @@ export type WatchConfig = {
   maxCffMs: number;
   modelId: string;
   availableModels: string[];
+  noModel: boolean;
 };
 
 export type StreamDelta = {
@@ -28,10 +29,11 @@ export type Sounding = {
 export type WatchEvent =
   | { type: 'daemon_started'; at: string; pid: number; config: WatchConfig }
   | { type: 'daemon_stopped'; at: string; reason: string }
+  | { type: 'stream_buffered'; at: string; stream: string; payload: JsonObject }
   | { type: 'stream_delta'; at: string; delta: StreamDelta }
   | { type: 'sounding_started'; at: string; sounding: Sounding }
   | { type: 'sounding_finished'; at: string; soundingId: string; modelId: string; text: string }
-  | { type: 'model_reroute'; at: string; soundingId: string; fromModelId: string; toModelId: string }
+  | { type: 'model_reroute'; at: string; soundingId: string; fromModelId: string; toModelId: string; params: JsonObject }
   | { type: 'subscription_changed'; at: string; stream: string; subscribed: boolean }
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }
   | { type: 'model_skipped'; at: string; soundingId: string; reason: string };

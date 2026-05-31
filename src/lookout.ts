@@ -4,12 +4,8 @@ import type { Sounding } from './types.js';
 import { StreamRegistry } from './streams.js';
 import { EventLog } from './event-log.js';
 
-type Reroute = {
-  toModelId: string;
-};
-
 export class ModelReroute extends Error {
-  constructor(readonly toModelId: string) {
+  constructor(readonly toModelId: string, readonly params: Record<string, unknown>) {
     super(`Reroute current Sounding to ${toModelId}`);
   }
 }
@@ -23,6 +19,7 @@ export class Lookout {
     private readonly log: EventLog,
     private readonly availableModels: string[],
     initialModelId: string,
+    private readonly noModel: boolean,
   ) {
     this.activeModelId = initialModelId;
   }
@@ -32,23 +29,31 @@ export class Lookout {
   }
 
   async receive(sounding: Sounding): Promise<string> {
-    if (!process.env.AI_GATEWAY_API_KEY) {
+    if (this.noModel || !process.env.AI_GATEWAY_API_KEY) {
+      const reason = this.noModel ? 'no-model mode is enabled' : 'AI_GATEWAY_API_KEY is not set';
       this.log.append({
         type: 'model_skipped',
         at: new Date().toISOString(),
         soundingId: sounding.id,
-        reason: 'AI_GATEWAY_API_KEY is not set',
+        reason,
       });
-      return '[model skipped: AI_GATEWAY_API_KEY is not set]';
+      return `[model skipped: ${reason}]`;
     }
 
     let attempts = 0;
     let currentSounding = sounding;
+    let reroute:
+      | {
+          fromModelId: string;
+          toModelId: string;
+          params: Record<string, unknown>;
+        }
+      | undefined;
 
     while (attempts < 3) {
       attempts += 1;
       try {
-        return await this.runOnce(currentSounding);
+        return await this.runOnce(currentSounding, reroute);
       } catch (error) {
         if (!(error instanceof ModelReroute)) {
           throw error;
@@ -56,12 +61,18 @@ export class Lookout {
 
         const fromModelId = this.activeModelId;
         this.activeModelId = error.toModelId;
+        reroute = {
+          fromModelId,
+          toModelId: error.toModelId,
+          params: error.params,
+        };
         this.log.append({
           type: 'model_reroute',
           at: new Date().toISOString(),
           soundingId: currentSounding.id,
           fromModelId,
           toModelId: error.toModelId,
+          params: error.params,
         });
         currentSounding = { ...currentSounding, modelId: error.toModelId };
       }
@@ -70,23 +81,33 @@ export class Lookout {
     throw new Error('Too many model reroutes for one Sounding');
   }
 
-  private async runOnce(sounding: Sounding): Promise<string> {
-    const prompt = this.formatSounding(sounding);
+  private async runOnce(
+    sounding: Sounding,
+    reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
+  ): Promise<string> {
+    const prompt = this.formatSounding(sounding, reroute);
     this.messages.push({ role: 'user', content: prompt });
 
-    const agent = new ToolLoopAgent({
-      model: gateway(this.activeModelId) as LanguageModel,
-      instructions: LOOKOUT_INSTRUCTIONS,
-      tools: this.createTools(sounding),
-      stopWhen: stepCountIs(20),
-    });
+    try {
+      const agent = new ToolLoopAgent({
+        model: gateway(this.activeModelId) as LanguageModel,
+        instructions: LOOKOUT_INSTRUCTIONS,
+        tools: this.createTools(sounding),
+        stopWhen: stepCountIs(20),
+      });
 
-    const result = await agent.generate({
-      messages: this.messages,
-    });
+      const result = await agent.generate({
+        messages: this.messages,
+      });
 
-    this.messages.push({ role: 'assistant', content: result.text });
-    return result.text;
+      this.messages.push({ role: 'assistant', content: result.text });
+      return result.text;
+    } catch (error) {
+      if (error instanceof ModelReroute) {
+        this.messages.pop();
+      }
+      throw error;
+    }
   }
 
   private createTools(sounding: Sounding) {
@@ -151,7 +172,7 @@ export class Lookout {
           if (!this.availableModels.includes(modelId)) {
             return { ok: false, error: `Unknown model: ${modelId}`, availableModels: this.availableModels };
           }
-          throw new ModelReroute(modelId);
+          throw new ModelReroute(modelId, { modelId });
         },
       }),
       report_gaze: tool({
@@ -170,10 +191,24 @@ export class Lookout {
     };
   }
 
-  private formatSounding(sounding: Sounding): string {
+  private formatSounding(
+    sounding: Sounding,
+    reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
+  ): string {
     const deltas = sounding.deltas
       .map(delta => `${delta.stream}: ${JSON.stringify(delta.payload)} @ ${delta.at}`)
       .join('\n');
+    const rerouteFrame = reroute
+      ? `
+[model_reroute]
+The previous model selected handle_with_model for this Sounding.
+from_model: ${reroute.fromModelId}
+to_model: ${reroute.toModelId}
+params: ${JSON.stringify(reroute.params)}
+Handle the same most-recent Sounding from this model substrate.
+[/model_reroute]
+`
+      : '';
 
     return `[cff_system]
 sounding_id: ${sounding.id}
@@ -189,7 +224,7 @@ ${this.streams.listSubscriptions().map(stream => `- ${stream}`).join('\n')}
 
 [deltas]
 ${deltas || '(none)'}
-[/deltas]`;
+[/deltas]${rerouteFrame}`;
   }
 }
 

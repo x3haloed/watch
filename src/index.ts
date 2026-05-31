@@ -58,6 +58,7 @@ function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
       .split(',')
       .map(model => model.trim())
       .filter(Boolean),
+    noModel: args.includes('--no-model'),
   };
 }
 
@@ -82,7 +83,7 @@ function usage(): void {
   console.log(`watch
 
 Commands:
-  watch daemon start [--min-cff-ms 2000] [--max-cff-ms 30000] [--model id] [--models id,id]
+  watch daemon start [--no-model] [--min-cff-ms 2000] [--max-cff-ms 30000] [--model id] [--models id,id]
   watch send "message"
   watch status
   watch sound
