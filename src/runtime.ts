@@ -46,12 +46,14 @@ export class WatchRuntime {
   }
 
   async handle(request: ControlRequest): Promise<ControlResponse> {
-    this.log.append({
-      type: 'control_message',
-      at: new Date().toISOString(),
-      command: request.command,
-      payload: request.command === 'send' ? { source: request.source ?? 'cli' } : undefined,
-    });
+    if (request.command !== 'status') {
+      this.log.append({
+        type: 'control_message',
+        at: new Date().toISOString(),
+        command: request.command,
+        payload: request.command === 'send' ? { source: request.source ?? 'cli' } : undefined,
+      });
+    }
 
     if (request.command === 'send') {
       const accepted = this.streams.push('inbox', {
