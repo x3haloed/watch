@@ -19,11 +19,14 @@ export class WatchRuntime {
   private soundQueued = false;
   private queuedTrigger: Sounding['trigger'] = 'delta';
   private activeAbortController: AbortController | undefined;
+  private noToolSoundings = 0;
+  private readonly restingModelId: string | undefined;
 
   constructor(private readonly config: WatchConfig) {
     this.log = new EventLog(config.repoRoot);
     this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
     this.lookout = new Lookout(this.streams, this.log, this.models, config.noModel, config.repoRoot);
+    this.restingModelId = config.restingModel ?? config.defaultModel;
   }
 
   start(): void {
@@ -78,6 +81,9 @@ export class WatchRuntime {
         data: {
           pid: process.pid,
           modelId: this.lookout.modelId,
+          restingModelId: this.restingModelId,
+          restAfterNoToolSoundings: this.config.restAfterNoToolSoundings,
+          noToolSoundings: this.noToolSoundings,
           availableModels: this.models.listModelIds(),
           activeModel: await this.models.getActive(),
           subscriptions: this.streams.listSubscriptions(),
@@ -198,16 +204,17 @@ export class WatchRuntime {
 
         try {
           this.activeAbortController = new AbortController();
-          const text = await this.lookout.receive(sounding, {
+          const result = await this.lookout.receive(sounding, {
             abortSignal: this.activeAbortController.signal,
             timeoutMs: this.config.modelTimeoutMs,
           });
+          await this.recordToolActivity(result.toolCallCount);
           this.log.append({
             type: 'sounding_finished',
             at: new Date().toISOString(),
             soundingId: sounding.id,
             modelId: this.lookout.modelId,
-            text,
+            text: result.text,
           });
         } catch (error) {
           if (isAbortError(error) || this.activeAbortController?.signal.aborted) {
@@ -237,6 +244,39 @@ export class WatchRuntime {
       }
     } finally {
       this.soundingActive = false;
+    }
+  }
+
+  private async recordToolActivity(toolCallCount: number): Promise<void> {
+    if (toolCallCount > 0) {
+      this.noToolSoundings = 0;
+      return;
+    }
+
+    this.noToolSoundings += 1;
+    await this.maybeRestoreRestingModel();
+  }
+
+  private async maybeRestoreRestingModel(): Promise<void> {
+    const threshold = this.config.restAfterNoToolSoundings;
+    const restingModelId = this.restingModelId;
+    if (!restingModelId || threshold <= 0 || this.noToolSoundings < threshold || this.lookout.modelId === restingModelId) {
+      return;
+    }
+
+    const fromModelId = this.lookout.modelId;
+    try {
+      await this.models.switchTo(restingModelId);
+      this.log.append({
+        type: 'model_auto_restored',
+        at: new Date().toISOString(),
+        fromModelId,
+        toModelId: restingModelId,
+        noToolSoundings: this.noToolSoundings,
+      });
+      this.noToolSoundings = 0;
+    } catch {
+      // Keep running on the current model if the configured resting model cannot be loaded.
     }
   }
 }

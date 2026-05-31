@@ -6,6 +6,8 @@ import type { ModelCapabilities, ModelConfig, ModelProvider, ResolvedModel } fro
 
 type WatchConfigFile = {
   defaultModel?: string;
+  restingModel?: string;
+  restAfterNoToolSoundings?: number;
   models?: Record<string, Omit<ModelConfig, 'id'> & { capabilities?: Partial<ModelCapabilities> }>;
 };
 

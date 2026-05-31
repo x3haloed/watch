@@ -41,7 +41,7 @@ export class Lookout {
   async receive(
     sounding: Sounding,
     options: { abortSignal?: AbortSignal; timeoutMs?: number } = {},
-  ): Promise<string> {
+  ): Promise<{ text: string; toolCallCount: number }> {
     const missingKey = requiredApiKeyEnv(sounding.model);
     if (this.noModel || missingKey) {
       const reason = this.noModel ? 'no-model mode is enabled' : `${missingKey} is not set`;
@@ -51,7 +51,7 @@ export class Lookout {
         soundingId: sounding.id,
         reason,
       });
-      return `[model skipped: ${reason}]`;
+      return { text: `[model skipped: ${reason}]`, toolCallCount: 0 };
     }
 
     let attempts = 0;
@@ -101,9 +101,10 @@ export class Lookout {
     model: ResolvedModel,
     reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
     options: { abortSignal?: AbortSignal; timeoutMs?: number } = {},
-  ): Promise<string> {
+  ): Promise<{ text: string; toolCallCount: number }> {
     const prompt = this.formatSounding(sounding, model, reroute);
     this.messages.push({ role: 'user', content: prompt });
+    let toolCallCount = 0;
 
     try {
       const agent = new ToolLoopAgent({
@@ -112,6 +113,7 @@ export class Lookout {
         tools: this.createTools(sounding),
         stopWhen: stepCountIs(20),
         onStepFinish: step => {
+          toolCallCount += countToolCalls(step);
           this.log.append({
             type: 'model_step_finished',
             at: new Date().toISOString(),
@@ -138,7 +140,7 @@ export class Lookout {
       });
 
       this.messages.push({ role: 'assistant', content: result.text });
-      return result.text;
+      return { text: result.text, toolCallCount };
     } catch (error) {
       if (error instanceof ModelReroute) {
         this.messages.pop();
@@ -503,6 +505,14 @@ function toJsonObject(value: unknown): Record<string, unknown> {
   return sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized)
     ? (sanitized as Record<string, unknown>)
     : { value: sanitized };
+}
+
+function countToolCalls(step: unknown): number {
+  const content = (step as { content?: unknown })?.content;
+  if (!Array.isArray(content)) {
+    return 0;
+  }
+  return content.filter(part => part && typeof part === 'object' && (part as { type?: string }).type === 'tool-call').length;
 }
 
 function sanitizeForJson(value: unknown, seen = new WeakSet<object>()): unknown {

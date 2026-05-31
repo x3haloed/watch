@@ -1,11 +1,17 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { cwd, exit } from 'node:process';
-import { eventLogPath } from './paths.js';
+import { configPath, eventLogPath } from './paths.js';
 import { sendControl } from './client.js';
 import { runDaemon } from './server.js';
 import { runOperatorConsole } from './tui.js';
 import type { WatchConfig } from './types.js';
+
+type WatchConfigFile = {
+  defaultModel?: string;
+  restingModel?: string;
+  restAfterNoToolSoundings?: number;
+};
 
 async function main(): Promise<void> {
   const [area, action, ...args] = process.argv.slice(2);
@@ -111,18 +117,34 @@ function sleep(ms: number): Promise<void> {
 }
 
 function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
+  const file = readWatchConfig(repoRoot);
+  const defaultModel = stringFlag(args, '--model') ?? file.defaultModel ?? 'openrouter:anthropic/claude-sonnet-4.5';
   return {
     repoRoot,
     minCffMs: numberFlag(args, '--min-cff-ms') ?? 2_000,
     maxCffMs: numberFlag(args, '--max-cff-ms') ?? 30_000,
     modelTimeoutMs: numberFlag(args, '--model-timeout-ms') ?? 120_000,
-    defaultModel: stringFlag(args, '--model') ?? 'openrouter:anthropic/claude-sonnet-4.5',
+    defaultModel,
+    restingModel: stringFlag(args, '--resting-model') ?? file.restingModel ?? file.defaultModel ?? defaultModel,
+    restAfterNoToolSoundings: numberFlag(args, '--rest-after-no-tool-soundings') ?? file.restAfterNoToolSoundings ?? 3,
     availableModels: (stringFlag(args, '--models') ?? '')
       .split(',')
       .map(model => model.trim())
       .filter(Boolean),
     noModel: args.includes('--no-model'),
   };
+}
+
+function readWatchConfig(repoRoot: string): WatchConfigFile {
+  const path = configPath(repoRoot);
+  if (!existsSync(path)) {
+    return {};
+  }
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as WatchConfigFile;
+  } catch {
+    return {};
+  }
 }
 
 function stringFlag(args: string[], flag: string): string | undefined {
@@ -146,7 +168,7 @@ function usage(): void {
   console.log(`watch
 
 Commands:
-  watch daemon start [--no-model] [--min-cff-ms 2000] [--max-cff-ms 30000] [--model-timeout-ms 120000] [--model id] [--models id,id]
+  watch daemon start [--no-model] [--min-cff-ms 2000] [--max-cff-ms 30000] [--model-timeout-ms 120000] [--model id] [--resting-model id] [--rest-after-no-tool-soundings 3] [--models id,id]
   watch send "message"
   watch status
   watch sound
@@ -192,6 +214,8 @@ function formatLogLine(line: string): string {
         return `${at} sounding failed ${event.soundingId} ${event.error?.name ?? 'Error'}: ${event.error?.message ?? ''}`;
       case 'model_reroute':
         return `${at} reroute ${event.soundingId} ${event.fromModelId} -> ${event.toModelId}`;
+      case 'model_auto_restored':
+        return `${at} auto-restored model ${event.fromModelId} -> ${event.toModelId} after ${event.noToolSoundings} no-tool soundings`;
       case 'subscription_changed':
         return `${at} ${event.subscribed ? 'subscribed' : 'unsubscribed'} ${event.stream}`;
       case 'control_message':
