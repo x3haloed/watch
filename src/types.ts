@@ -63,6 +63,9 @@ export type WatchEvent =
   | { type: 'stream_delta'; at: string; delta: StreamDelta }
   | { type: 'sounding_started'; at: string; sounding: Sounding }
   | { type: 'sounding_finished'; at: string; soundingId: string; modelId: string; text: string }
+  | { type: 'model_step_finished'; at: string; soundingId: string; modelId: string; step: JsonObject }
+  | { type: 'model_finished'; at: string; soundingId: string; modelId: string; result: JsonObject }
+  | { type: 'model_error'; at: string; soundingId: string; modelId: string; error: JsonObject }
   | { type: 'model_reroute'; at: string; soundingId: string; fromModelId: string; toModelId: string; params: JsonObject }
   | { type: 'subscription_changed'; at: string; stream: string; subscribed: boolean }
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }

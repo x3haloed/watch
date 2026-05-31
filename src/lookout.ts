@@ -94,6 +94,24 @@ export class Lookout {
         instructions: LOOKOUT_INSTRUCTIONS,
         tools: this.createTools(sounding),
         stopWhen: stepCountIs(20),
+        onStepFinish: step => {
+          this.log.append({
+            type: 'model_step_finished',
+            at: new Date().toISOString(),
+            soundingId: sounding.id,
+            modelId: model.id,
+            step: toJsonObject(step),
+          });
+        },
+        onFinish: event => {
+          this.log.append({
+            type: 'model_finished',
+            at: new Date().toISOString(),
+            soundingId: sounding.id,
+            modelId: model.id,
+            result: toJsonObject(event),
+          });
+        },
       });
 
       const result = await agent.generate({
@@ -105,6 +123,14 @@ export class Lookout {
     } catch (error) {
       if (error instanceof ModelReroute) {
         this.messages.pop();
+      } else {
+        this.log.append({
+          type: 'model_error',
+          at: new Date().toISOString(),
+          soundingId: sounding.id,
+          modelId: model.id,
+          error: errorToJson(error),
+        });
       }
       throw error;
     }
@@ -251,4 +277,64 @@ function requiredApiKeyEnv(model: ResolvedModel): string | undefined {
   }
   const envName = model.apiKeyEnv ?? (model.provider === 'openrouter' ? 'OPENROUTER_API_KEY' : undefined);
   return envName && !process.env[envName]?.trim() ? envName : undefined;
+}
+
+function errorToJson(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      cause: sanitizeForJson(error.cause),
+    };
+  }
+  return { value: sanitizeForJson(error) };
+}
+
+function toJsonObject(value: unknown): Record<string, unknown> {
+  const sanitized = sanitizeForJson(value);
+  return sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized)
+    ? (sanitized as Record<string, unknown>)
+    : { value: sanitized };
+}
+
+function sanitizeForJson(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'bigint') {
+    return value.toString();
+  }
+
+  if (typeof value === 'function' || typeof value === 'symbol') {
+    return undefined;
+  }
+
+  if (value instanceof Error) {
+    return errorToJson(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizeForJson(item, seen));
+  }
+
+  if (typeof value === 'object') {
+    if (seen.has(value)) {
+      return '[Circular]';
+    }
+    seen.add(value);
+
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      const sanitized = sanitizeForJson(nested, seen);
+      if (sanitized !== undefined) {
+        out[key] = sanitized;
+      }
+    }
+    seen.delete(value);
+    return out;
+  }
+
+  return String(value);
 }
