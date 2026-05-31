@@ -167,14 +167,24 @@ export class WatchRuntime {
         this.lastSoundingAt = now;
         this.log.append({ type: 'sounding_started', at: new Date().toISOString(), sounding });
 
-        const text = await this.lookout.receive(sounding);
-        this.log.append({
-          type: 'sounding_finished',
-          at: new Date().toISOString(),
-          soundingId: sounding.id,
-          modelId: this.lookout.modelId,
-          text,
-        });
+        try {
+          const text = await this.lookout.receive(sounding);
+          this.log.append({
+            type: 'sounding_finished',
+            at: new Date().toISOString(),
+            soundingId: sounding.id,
+            modelId: this.lookout.modelId,
+            text,
+          });
+        } catch (error) {
+          this.log.append({
+            type: 'sounding_failed',
+            at: new Date().toISOString(),
+            soundingId: sounding.id,
+            modelId: this.lookout.modelId,
+            error: errorToJson(error),
+          });
+        }
 
         if (this.soundQueued || this.streams.hasPending()) {
           nextTrigger = this.queuedTrigger;
@@ -185,4 +195,15 @@ export class WatchRuntime {
       this.soundingActive = false;
     }
   }
+}
+
+function errorToJson(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  return { value: String(error) };
 }
