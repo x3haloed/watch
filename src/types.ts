@@ -76,6 +76,7 @@ export type WatchEvent =
   | { type: 'model_aborted'; at: string; soundingId: string; modelId: string; reason: string }
   | { type: 'model_unavailable'; at: string; soundingId: string; modelId: string; reason: string }
   | { type: 'model_reroute'; at: string; soundingId: string; fromModelId: string; toModelId: string; params: JsonObject }
+  | { type: 'model_reroute_failed'; at: string; soundingId: string; fromModelId: string; toModelId: string; error: JsonObject }
   | { type: 'model_auto_restored'; at: string; fromModelId: string; toModelId: string; noToolSoundings: number }
   | { type: 'cli_message'; at: string; soundingId: string; medium?: string; replyToId?: number; message: string }
   | { type: 'subscription_changed'; at: string; stream: string; subscribed: boolean }

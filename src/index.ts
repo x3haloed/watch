@@ -214,6 +214,8 @@ function formatLogLine(line: string): string {
         return `${at} sounding failed ${event.soundingId} ${event.error?.name ?? 'Error'}: ${event.error?.message ?? ''}`;
       case 'model_reroute':
         return `${at} reroute ${event.soundingId} ${event.fromModelId} -> ${event.toModelId}`;
+      case 'model_reroute_failed':
+        return `${at} reroute failed ${event.soundingId} ${event.fromModelId} -> ${event.toModelId}: ${event.error?.name ?? 'Error'} ${event.error?.message ?? ''}`;
       case 'model_auto_restored':
         return `${at} auto-restored model ${event.fromModelId} -> ${event.toModelId} after ${event.noToolSoundings} no-tool soundings`;
       case 'subscription_changed':

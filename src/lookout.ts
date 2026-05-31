@@ -66,13 +66,44 @@ export class Lookout {
           params: Record<string, unknown>;
         }
       | undefined;
+    let rerouteFailure:
+      | {
+          fromModelId: string;
+          toModelId: string;
+          error: Record<string, unknown>;
+        }
+      | undefined;
 
     while (attempts < 3) {
       attempts += 1;
       try {
-        return await this.runOnce(currentSounding, activeModel, reroute, options);
+        const result = await this.runOnce(currentSounding, activeModel, reroute, rerouteFailure, options);
+        if (reroute) {
+          await this.models.switchTo(activeModel.id);
+        }
+        return result;
       } catch (error) {
         if (!(error instanceof ModelReroute)) {
+          if (reroute) {
+            const errorJson = errorToJson(error);
+            this.log.append({
+              type: 'model_reroute_failed',
+              at: new Date().toISOString(),
+              soundingId: currentSounding.id,
+              fromModelId: reroute.fromModelId,
+              toModelId: reroute.toModelId,
+              error: errorJson,
+            });
+            activeModel = await this.models.resolve(reroute.fromModelId);
+            currentSounding = { ...currentSounding, modelId: activeModel.id, model: activeModel };
+            rerouteFailure = {
+              fromModelId: reroute.fromModelId,
+              toModelId: reroute.toModelId,
+              error: errorJson,
+            };
+            reroute = undefined;
+            continue;
+          }
           throw error;
         }
 
@@ -102,9 +133,10 @@ export class Lookout {
     sounding: Sounding,
     model: ResolvedModel,
     reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
+    rerouteFailure?: { fromModelId: string; toModelId: string; error: Record<string, unknown> },
     options: { abortSignal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<{ text: string; toolCallCount: number }> {
-    const prompt = this.formatSounding(sounding, model, reroute);
+    const prompt = this.formatSounding(sounding, model, reroute, rerouteFailure);
     this.messages.push({ role: 'user', content: prompt });
     let toolCallCount = 0;
 
@@ -144,8 +176,8 @@ export class Lookout {
       this.messages.push({ role: 'assistant', content: result.text });
       return { text: result.text, toolCallCount };
     } catch (error) {
+      this.messages.pop();
       if (error instanceof ModelReroute) {
-        this.messages.pop();
       } else {
         this.log.append({
           type: 'model_error',
@@ -385,7 +417,7 @@ export class Lookout {
       }),
       handle_with_model: tool({
         description:
-          'Swap the active model immediately and rerun the current Sounding on that model. The abandoned attempt is logged by Watch but not added to Lookout context.',
+          'Provisionally rerun the current Sounding on another model. Watch commits the new active model only if that model completes the Sounding successfully.',
         inputSchema: jsonSchema<{ modelId: string }>({
           type: 'object',
           properties: {
@@ -403,7 +435,10 @@ export class Lookout {
           }
           let model: ResolvedModel;
           try {
-            model = await this.models.switchTo(modelId);
+            model = await this.models.resolve(modelId);
+            if (!model.capabilities.tools) {
+              return { ok: false, error: `Model ${modelId} is not supported by Watch because tool_call is false or unknown.` };
+            }
           } catch (error) {
             return { ok: false, error: error instanceof Error ? error.message : String(error) };
           }
@@ -484,6 +519,7 @@ ${lines.join('\n')}
     sounding: Sounding,
     model: ResolvedModel,
     reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
+    rerouteFailure?: { fromModelId: string; toModelId: string; error: Record<string, unknown> },
   ): string {
     const deltas = sounding.deltas
       .map(delta => `${delta.stream}: ${JSON.stringify(delta.payload)} @ ${delta.at}`)
@@ -497,6 +533,17 @@ to_model: ${reroute.toModelId}
 params: ${JSON.stringify(reroute.params)}
 Handle the same most-recent Sounding from this model substrate.
 [/model_reroute]
+`
+      : '';
+    const rerouteFailureFrame = rerouteFailure
+      ? `
+[model_reroute_failed]
+You previously called handle_with_model for this same Sounding.
+from_model: ${rerouteFailure.fromModelId}
+to_model: ${rerouteFailure.toModelId}
+provider_error: ${JSON.stringify(rerouteFailure.error)}
+The reroute was not committed. Handle the original Sounding from this model, or call handle_with_model with a different viable model.
+[/model_reroute_failed]
 `
       : '';
 
@@ -517,7 +564,7 @@ ${this.streams.listSubscriptions().map(stream => `- ${stream}`).join('\n')}
 
 [deltas]
 ${deltas || '(none)'}
-[/deltas]${rerouteFrame}`;
+[/deltas]${rerouteFrame}${rerouteFailureFrame}`;
   }
 }
 
