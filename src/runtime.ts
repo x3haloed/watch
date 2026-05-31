@@ -147,7 +147,7 @@ export class WatchRuntime {
 
     const elapsed = Date.now() - this.lastSoundingAt;
     const trigger = elapsed >= this.config.maxCffMs ? 'heartbeat' : 'delta';
-    if ((elapsed >= this.config.minCffMs && this.streams.hasPending()) || elapsed >= this.config.maxCffMs) {
+    if ((elapsed >= this.config.minCffMs && this.streams.hasWakingPending()) || elapsed >= this.config.maxCffMs) {
       void this.sound(trigger);
     }
   }
@@ -245,7 +245,7 @@ export class WatchRuntime {
           this.activeAbortController = undefined;
         }
 
-        if (this.running && (this.soundQueued || this.streams.hasPending())) {
+        if (this.running && (this.soundQueued || this.streams.hasWakingPending())) {
           nextTrigger = this.queuedTrigger;
           this.queuedTrigger = 'delta';
         }

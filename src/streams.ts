@@ -16,6 +16,7 @@ export type StreamPopContext = {
 
 export interface WatchStream {
   readonly name: string;
+  readonly waking: boolean;
   push(payload: JsonObject): void;
   hasDelta(now: Date): boolean;
   popDelta(context: StreamPopContext): StreamDelta | undefined;
@@ -23,6 +24,7 @@ export interface WatchStream {
 
 class ClockStream implements WatchStream {
   readonly name = 'clock';
+  readonly waking = false;
   private current: JsonObject | undefined;
   private lastPoppedSecond = '';
 
@@ -51,6 +53,7 @@ class ClockStream implements WatchStream {
 
 class InboxStream implements WatchStream {
   readonly name = 'inbox';
+  readonly waking = true;
   private pendingIds: number[] = [];
 
   constructor(private readonly messages: MessageStore) {}
@@ -104,6 +107,7 @@ class InboxStream implements WatchStream {
 }
 
 class BufferedStream implements WatchStream {
+  readonly waking = true;
   private payloads: JsonObject[] = [];
 
   constructor(readonly name: string) {}
@@ -193,6 +197,10 @@ export class StreamRegistry {
 
   hasPending(now = new Date()): boolean {
     return [...this.streams.values()].some(stream => this.isSubscribed(stream.name) && stream.hasDelta(now));
+  }
+
+  hasWakingPending(now = new Date()): boolean {
+    return [...this.streams.values()].some(stream => this.isSubscribed(stream.name) && stream.waking && stream.hasDelta(now));
   }
 
   getMessage(id: number): StoredMessage | undefined {
