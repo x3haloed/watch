@@ -7,6 +7,7 @@ import { ModelRegistry } from './model-registry.js';
 import { buildContextPrompt } from './context-files.js';
 import { RepoFileTools } from './file-tools.js';
 import { SkillLibrary } from './skills.js';
+import { TerminalTools } from './terminal-tools.js';
 
 export class ModelReroute extends Error {
   constructor(readonly toModelId: string, readonly model: ResolvedModel, readonly params: Record<string, unknown>) {
@@ -18,6 +19,7 @@ export class Lookout {
   private readonly messages: ModelMessage[] = [];
   private readonly fileTools: RepoFileTools;
   private readonly skills: SkillLibrary;
+  private readonly terminalTools: TerminalTools;
   private readonly contextPrompt: Promise<string>;
   private readonly cwd: string;
 
@@ -33,6 +35,7 @@ export class Lookout {
     this.cwd = repoRoot;
     this.fileTools = new RepoFileTools(repoRoot);
     this.skills = new SkillLibrary(repoRoot);
+    this.terminalTools = new TerminalTools(repoRoot, log);
     this.contextPrompt = buildContextPrompt(repoRoot);
   }
 
@@ -287,6 +290,56 @@ export class Lookout {
           additionalProperties: false,
         }),
         execute: async ({ name, file_path: filePath }) => this.skills.view(name, filePath),
+      }),
+      terminal: tool({
+        description:
+          'Run a shell command. Use this for builds, tests, package managers, git, scripts, processes, and network checks. Do not use it for reading/searching/editing files when read_file, search_files, write_file, or patch can do the job. Use background=true only for servers/watchers that keep running. PTY is accepted for interactive tools but may fall back to normal pipes.',
+        inputSchema: jsonSchema<{
+          command: string;
+          workdir?: string;
+          timeoutMs?: number;
+          background?: boolean;
+          pty?: boolean;
+          yieldTimeMs?: number;
+          maxOutputChars?: number;
+        }>({
+          type: 'object',
+          properties: {
+            command: { type: 'string', description: 'Shell command to execute.' },
+            workdir: { type: 'string', description: 'Optional working directory. Relative paths resolve from cwd; absolute paths are accepted.' },
+            timeoutMs: { type: 'number', description: 'Timeout in milliseconds. Defaults to 120000.' },
+            background: { type: 'boolean', description: 'Only for servers/watchers that do not exit. Returns a sessionId.' },
+            pty: { type: 'boolean', description: 'Request PTY-like execution for interactive commands. Defaults to false.' },
+            yieldTimeMs: { type: 'number', description: 'How long to wait for output before returning. Defaults to 1000.' },
+            maxOutputChars: { type: 'number', description: 'Maximum output characters to return. Defaults to 20000.' },
+          },
+          required: ['command'],
+          additionalProperties: false,
+        }),
+        execute: async input => this.terminalTools.run(sounding.id, input),
+      }),
+      terminal_input: tool({
+        description:
+          'Interact with a running terminal session from terminal(background=true): poll output, write stdin, or kill it.',
+        inputSchema: jsonSchema<{
+          sessionId: string;
+          input?: string;
+          action?: 'poll' | 'write' | 'kill';
+          yieldTimeMs?: number;
+          maxOutputChars?: number;
+        }>({
+          type: 'object',
+          properties: {
+            sessionId: { type: 'string', description: 'Session ID returned by terminal(background=true).' },
+            input: { type: 'string', description: 'Input bytes to write when action is write. Include newlines when needed.' },
+            action: { type: 'string', enum: ['poll', 'write', 'kill'], description: 'Defaults to write when input is present, otherwise poll.' },
+            yieldTimeMs: { type: 'number', description: 'How long to wait for more output before returning. Defaults to 1000.' },
+            maxOutputChars: { type: 'number', description: 'Maximum output characters to return. Defaults to 20000.' },
+          },
+          required: ['sessionId'],
+          additionalProperties: false,
+        }),
+        execute: async input => this.terminalTools.input(sounding.id, input),
       }),
       open_message: tool({
         description:
@@ -575,6 +628,7 @@ Inbox deltas are indexes, not full messages. When an inbox entry says to call op
 If you want to communicate externally, call send_message with a medium such as "cli". Your final assistant text is private working speech and is not delivered to the user.
 Use subscribe_stream and unsubscribe_stream to control your gaze.
 Use handle_with_model when the current Sounding calls for a larger model, stronger reasoning, or different modalities than the active model has.
+Use terminal for builds, tests, package managers, git, scripts, long-running processes, and network checks. Prefer filesystem tools for file reads, searches, writes, and patches. Use terminal background sessions only for servers or watchers that keep running.
 Do not narrate internal routing unless it matters to an external observer.`;
 
 function formatCapabilities(capabilities: ModelCapabilities): string {

@@ -254,6 +254,23 @@ function inferActive(events: EventRecord[]): string {
 function extractToolRows(events: EventRecord[]): string[] {
   const rows: string[] = [];
   for (const event of events) {
+    if (event.type === 'terminal_started') {
+      rows.push(`${time(event.at)} ${event.soundingId} $ ${event.command} (${event.sessionId.slice(0, 8)})`);
+    }
+    if (event.type === 'terminal_output_delta') {
+      rows.push(`${time(event.at)} ${event.sessionId.slice(0, 8)} ${event.stream}> ${shortText(event.text, 500)}`);
+    }
+    if (event.type === 'terminal_finished') {
+      rows.push(
+        `${time(event.at)} ${event.sessionId.slice(0, 8)} exit=${event.exitCode} ${event.durationMs}ms ${shortText(event.output, 500)}`,
+      );
+    }
+    if (event.type === 'terminal_input') {
+      rows.push(`${time(event.at)} ${event.sessionId.slice(0, 8)} stdin ${shortText(event.text, 160)}`);
+    }
+    if (event.type === 'terminal_killed') {
+      rows.push(`${time(event.at)} ${event.sessionId.slice(0, 8)} killed`);
+    }
     if (event.type !== 'model_step_finished') continue;
     const content = Array.isArray(event.step?.content) ? event.step.content : [];
     for (const part of content) {

@@ -78,6 +78,11 @@ export type WatchEvent =
   | { type: 'model_reroute'; at: string; soundingId: string; fromModelId: string; toModelId: string; params: JsonObject }
   | { type: 'model_reroute_failed'; at: string; soundingId: string; fromModelId: string; toModelId: string; error: JsonObject }
   | { type: 'model_auto_restored'; at: string; fromModelId: string; toModelId: string; noToolSoundings: number }
+  | { type: 'terminal_started'; at: string; soundingId: string; sessionId: string; command: string; cwd: string; background: boolean; pty: boolean }
+  | { type: 'terminal_output_delta'; at: string; soundingId: string; sessionId: string; stream: 'stdout' | 'stderr'; text: string }
+  | { type: 'terminal_finished'; at: string; soundingId: string; sessionId: string; exitCode: number | null; durationMs: number; output: string; error?: string }
+  | { type: 'terminal_input'; at: string; soundingId: string; sessionId: string; text: string }
+  | { type: 'terminal_killed'; at: string; soundingId: string; sessionId: string }
   | { type: 'cli_message'; at: string; soundingId: string; medium?: string; replyToId?: number; message: string }
   | { type: 'subscription_changed'; at: string; stream: string; subscribed: boolean }
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }

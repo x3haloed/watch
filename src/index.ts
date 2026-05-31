@@ -218,6 +218,16 @@ function formatLogLine(line: string): string {
         return `${at} reroute failed ${event.soundingId} ${event.fromModelId} -> ${event.toModelId}: ${event.error?.name ?? 'Error'} ${event.error?.message ?? ''}`;
       case 'model_auto_restored':
         return `${at} auto-restored model ${event.fromModelId} -> ${event.toModelId} after ${event.noToolSoundings} no-tool soundings`;
+      case 'terminal_started':
+        return `${at} terminal started ${event.sessionId} ${event.background ? 'bg' : 'fg'} cwd=${event.cwd} $ ${event.command}`;
+      case 'terminal_output_delta':
+        return `${at} terminal ${event.sessionId} ${event.stream}> ${shortText(event.text)}`;
+      case 'terminal_finished':
+        return `${at} terminal finished ${event.sessionId} exit=${event.exitCode} duration=${event.durationMs}ms output=${shortText(event.output)}`;
+      case 'terminal_input':
+        return `${at} terminal input ${event.sessionId} ${shortText(event.text)}`;
+      case 'terminal_killed':
+        return `${at} terminal killed ${event.sessionId}`;
       case 'subscription_changed':
         return `${at} ${event.subscribed ? 'subscribed' : 'unsubscribed'} ${event.stream}`;
       case 'control_message':
