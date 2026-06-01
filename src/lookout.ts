@@ -514,6 +514,42 @@ export class Lookout {
           return { ok: true, rerouteRequested: true, toModel: modelId };
         },
       }),
+      session_dashboard: tool({
+        description:
+          'Return a minimal current session snapshot: rough context estimate, model roster, and stream subscriptions.',
+        inputSchema: jsonSchema<Record<string, never>>({
+          type: 'object',
+          properties: {},
+          additionalProperties: false,
+        }),
+        execute: async () => {
+          const [activeModel, allAvailable, instructions] = await Promise.all([
+            this.models.getActive(),
+            this.models.resolveAll(),
+            this.instructions(),
+          ]);
+          return {
+            ok: true,
+            context: {
+              usedTokensEstimate: estimateTokensRough(
+                JSON.stringify({
+                  instructions,
+                  messages: this.messages,
+                }),
+              ),
+              limitTokens: activeModel.capabilities.contextTokens ?? null,
+            },
+            model: {
+              current: activeModel.id,
+              allAvailable,
+            },
+            streams: {
+              subscriptions: this.streams.listSubscriptions(),
+              notSubscribed: this.streams.listNotSubscribed(),
+            },
+          };
+        },
+      }),
       report_gaze: tool({
         description: 'Report the current stream subscriptions.',
         inputSchema: jsonSchema<Record<string, never>>({
@@ -694,6 +730,10 @@ function defaultUseFor(model: ResolvedModel, restingModelId?: string): string {
     model.params ?? inferParamCount(`${model.id} ${model.model}`) ?? '',
   ].filter(Boolean);
   return traits.join(', ');
+}
+
+function estimateTokensRough(text: string): number {
+  return text.length === 0 ? 0 : Math.ceil(text.length / 4);
 }
 
 function requiredApiKeyEnv(model: ResolvedModel): string | undefined {

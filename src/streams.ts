@@ -261,6 +261,14 @@ export class StreamRegistry {
     return [...this.subscriptions].sort();
   }
 
+  listStreams(): string[] {
+    return [...this.streams.keys()].sort();
+  }
+
+  listNotSubscribed(): string[] {
+    return this.listStreams().filter(stream => !this.subscriptions.has(stream));
+  }
+
   push(stream: string, payload: JsonObject): boolean {
     if (!this.isSubscribed(stream)) {
       return false;
