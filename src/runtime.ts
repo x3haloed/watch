@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ControlRequest, ControlResponse, Sounding, WatchConfig } from './types.js';
 import { EventLog } from './event-log.js';
-import { Lookout } from './lookout.js';
+import { Lookout, type RestModelNotice } from './lookout.js';
 import { StreamRegistry } from './streams.js';
 import { ModelRegistry } from './model-registry.js';
 
@@ -21,6 +21,7 @@ export class WatchRuntime {
   private activeAbortController: AbortController | undefined;
   private noToolSoundings = 0;
   private readonly restingModelId: string | undefined;
+  private pendingRestModelNotice: RestModelNotice | undefined;
 
   constructor(private readonly config: WatchConfig) {
     this.streams = new StreamRegistry(config.webApiStreams);
@@ -213,9 +214,11 @@ export class WatchRuntime {
 
         try {
           this.activeAbortController = new AbortController();
+          const restModelNotice = this.consumeRestModelNotice(model.id);
           const result = await this.lookout.receive(sounding, {
             abortSignal: this.activeAbortController.signal,
             timeoutMs: this.config.modelTimeoutMs,
+            restModelNotice,
           });
           await this.recordToolActivity(result.toolCallCount);
           this.log.append({
@@ -283,10 +286,25 @@ export class WatchRuntime {
         toModelId: restingModelId,
         noToolSoundings: this.noToolSoundings,
       });
+      this.pendingRestModelNotice = {
+        fromModelId,
+        toModelId: restingModelId,
+        noToolSoundings: this.noToolSoundings,
+      };
       this.noToolSoundings = 0;
     } catch {
       // Keep running on the current model if the configured resting model cannot be loaded.
     }
+  }
+
+  private consumeRestModelNotice(modelId: string): RestModelNotice | undefined {
+    if (!this.pendingRestModelNotice || modelId !== this.pendingRestModelNotice.toModelId) {
+      return undefined;
+    }
+
+    const notice = this.pendingRestModelNotice;
+    this.pendingRestModelNotice = undefined;
+    return notice;
   }
 }
 

@@ -9,6 +9,12 @@ import { RepoFileTools } from './file-tools.js';
 import { SkillLibrary } from './skills.js';
 import { TerminalTools } from './terminal-tools.js';
 
+export type RestModelNotice = {
+  fromModelId: string;
+  toModelId: string;
+  noToolSoundings: number;
+};
+
 export class ModelReroute extends Error {
   constructor(readonly toModelId: string, readonly model: ResolvedModel, readonly params: Record<string, unknown>) {
     super(`Reroute current Sounding to ${toModelId}`);
@@ -46,7 +52,7 @@ export class Lookout {
 
   async receive(
     sounding: Sounding,
-    options: { abortSignal?: AbortSignal; timeoutMs?: number } = {},
+    options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice } = {},
   ): Promise<{ text: string; toolCallCount: number }> {
     const missingKey = requiredApiKeyEnv(sounding.model);
     if (this.noModel || missingKey) {
@@ -138,9 +144,9 @@ export class Lookout {
     model: ResolvedModel,
     reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
     rerouteFailure?: { fromModelId: string; toModelId: string; error: Record<string, unknown> },
-    options: { abortSignal?: AbortSignal; timeoutMs?: number } = {},
+    options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice } = {},
   ): Promise<{ text: string; toolCallCount: number }> {
-    const prompt = this.formatSounding(sounding, model, reroute, rerouteFailure);
+    const prompt = this.formatSounding(sounding, model, reroute, rerouteFailure, options.restModelNotice);
     this.messages.push({ role: 'user', content: prompt });
     let toolCallCount = 0;
 
@@ -583,6 +589,7 @@ ${lines.join('\n')}
     model: ResolvedModel,
     reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
     rerouteFailure?: { fromModelId: string; toModelId: string; error: Record<string, unknown> },
+    restModelNotice?: RestModelNotice,
   ): string {
     const deltas = sounding.deltas
       .map(delta => `${delta.stream}: ${JSON.stringify(delta.payload)} @ ${delta.at}`)
@@ -609,6 +616,17 @@ The reroute was not committed. Handle the original Sounding from this model, or 
 [/model_reroute_failed]
 `
       : '';
+    const restModelFrame = restModelNotice
+      ? `
+[model_restored]
+Watch has restored the resting model after ${restModelNotice.noToolSoundings} consecutive Soundings without tool calls.
+from_model: ${restModelNotice.fromModelId}
+to_model: ${restModelNotice.toModelId}
+This is not a failure or loss of standing. It is the configured quiet substrate for continued presence.
+You may continue monitoring, respond if needed, or reroute with handle_with_model if this Sounding requires another model.
+[/model_restored]
+`
+      : '';
 
     return `[cff_system]
 sounding_id: ${sounding.id}
@@ -627,7 +645,7 @@ ${this.streams.listSubscriptions().map(stream => `- ${stream}`).join('\n')}
 
 [deltas]
 ${deltas || '(none)'}
-[/deltas]${rerouteFrame}${rerouteFailureFrame}`;
+[/deltas]${restModelFrame}${rerouteFrame}${rerouteFailureFrame}`;
   }
 }
 
