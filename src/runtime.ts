@@ -6,7 +6,7 @@ import { StreamRegistry } from './streams.js';
 import { ModelRegistry } from './model-registry.js';
 
 export class WatchRuntime {
-  private readonly streams = new StreamRegistry();
+  private readonly streams: StreamRegistry;
   private readonly log: EventLog;
   private readonly lookout: Lookout;
   private readonly models: ModelRegistry;
@@ -23,6 +23,7 @@ export class WatchRuntime {
   private readonly restingModelId: string | undefined;
 
   constructor(private readonly config: WatchConfig) {
+    this.streams = new StreamRegistry(config.webApiStreams);
     this.log = new EventLog(config.repoRoot);
     this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
     this.restingModelId = config.restingModel ?? config.defaultModel;
@@ -175,7 +176,7 @@ export class WatchRuntime {
         const availability = this.config.noModel ? { ok: true as const } : await this.models.checkAvailable(model);
         const now = Date.now();
         const popAt = new Date(now);
-        const deltas = this.streams.popDeltas({ now: popAt, capabilities: model.capabilities });
+        const deltas = await this.streams.popDeltas({ now: popAt, capabilities: model.capabilities });
         for (const delta of deltas) {
           this.log.append({ type: 'stream_delta', at: new Date().toISOString(), delta });
         }

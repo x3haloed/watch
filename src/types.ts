@@ -7,9 +7,18 @@ export type WatchConfig = {
   modelTimeoutMs: number;
   defaultModel: string;
   availableModels: string[];
+  webApiStreams: WebApiStreamConfig[];
   restingModel?: string;
   restAfterNoToolSoundings: number;
   noModel: boolean;
+};
+
+export type WebApiStreamConfig = {
+  name: string;
+  url: string;
+  headers?: Record<string, string>;
+  waking?: boolean;
+  subscribed?: boolean;
 };
 
 export type ModelProvider = 'openrouter' | 'openai-compatible';

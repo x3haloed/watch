@@ -5,13 +5,14 @@ import { configPath, eventLogPath } from './paths.js';
 import { sendControl } from './client.js';
 import { runDaemon } from './server.js';
 import { runOperatorConsole } from './tui.js';
-import type { WatchConfig } from './types.js';
+import type { WatchConfig, WebApiStreamConfig } from './types.js';
 
 type WatchConfigFile = {
   defaultModel?: string;
   restingModel?: string;
   minCffMs?: number;
   maxCffMs?: number;
+  webApiStreams?: WebApiStreamConfig[];
   restAfterNoToolSoundings?: number;
 };
 
@@ -127,6 +128,7 @@ function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
     maxCffMs: numberFlag(args, '--max-cff-ms') ?? file.maxCffMs ?? 30_000,
     modelTimeoutMs: numberFlag(args, '--model-timeout-ms') ?? 120_000,
     defaultModel,
+    webApiStreams: Array.isArray(file.webApiStreams) ? file.webApiStreams : [],
     restingModel: stringFlag(args, '--resting-model') ?? file.restingModel ?? file.defaultModel ?? defaultModel,
     restAfterNoToolSoundings: numberFlag(args, '--rest-after-no-tool-soundings') ?? file.restAfterNoToolSoundings ?? 3,
     availableModels: (stringFlag(args, '--models') ?? '')

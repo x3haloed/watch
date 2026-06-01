@@ -1,4 +1,4 @@
-import type { JsonObject, ModelCapabilities, StreamDelta } from './types.js';
+import type { JsonObject, ModelCapabilities, StreamDelta, WebApiStreamConfig } from './types.js';
 
 export type StoredMessage = {
   id: number;
@@ -17,9 +17,10 @@ export type StreamPopContext = {
 export interface WatchStream {
   readonly name: string;
   readonly waking: boolean;
+  readonly sampled?: boolean;
   push(payload: JsonObject): void;
   hasDelta(now: Date): boolean;
-  popDelta(context: StreamPopContext): StreamDelta | undefined;
+  popDelta(context: StreamPopContext): StreamDelta | undefined | Promise<StreamDelta | undefined>;
 }
 
 class ClockStream implements WatchStream {
@@ -140,13 +141,101 @@ class BufferedStream implements WatchStream {
   }
 }
 
+class WebApiStream implements WatchStream {
+  readonly sampled = true;
+  readonly waking: boolean;
+  private lastFingerprint = '';
+
+  constructor(
+    readonly name: string,
+    private readonly config: WebApiStreamConfig,
+  ) {
+    this.waking = config.waking === true;
+  }
+
+  push(): void {
+    // Web API streams are sampled during Sounding construction.
+  }
+
+  hasDelta(): boolean {
+    return false;
+  }
+
+  async popDelta({ now }: StreamPopContext): Promise<StreamDelta | undefined> {
+    const sampledAt = now.toISOString();
+    const result = await this.fetchCurrent(sampledAt);
+    if (result.fingerprint === this.lastFingerprint) {
+      return undefined;
+    }
+    this.lastFingerprint = result.fingerprint;
+    return {
+      stream: this.name,
+      at: sampledAt,
+      payload: result.payload,
+    };
+  }
+
+  private async fetchCurrent(sampledAt: string): Promise<{ fingerprint: string; payload: JsonObject }> {
+    try {
+      const response = await fetch(this.config.url, {
+        method: 'GET',
+        headers: this.config.headers,
+        signal: AbortSignal.timeout(10_000),
+      });
+      const contentType = response.headers.get('content-type') ?? '';
+      const text = await response.text();
+      const parsed = contentType.includes('application/json') ? parseJson(text) : undefined;
+      const fingerprint = JSON.stringify({
+        ok: response.ok,
+        status: response.status,
+        body: text,
+      });
+      return {
+        fingerprint,
+        payload: {
+          ok: response.ok,
+          url: this.config.url,
+          status: response.status,
+          statusText: response.statusText,
+          contentType,
+          sampledAt,
+          body: parsed ?? text,
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        fingerprint: JSON.stringify({ error: message }),
+        payload: {
+          ok: false,
+          url: this.config.url,
+          sampledAt,
+          error: message,
+        },
+      };
+    }
+  }
+}
+
 export class StreamRegistry {
   private readonly messages = new MessageStore();
-  private readonly streams = new Map<string, WatchStream>([
-    ['clock', new ClockStream()],
-    ['inbox', new InboxStream(this.messages)],
-  ]);
-  private readonly subscriptions = new Set<string>(['clock', 'inbox']);
+  private readonly streams = new Map<string, WatchStream>();
+  private readonly subscriptions = new Set<string>();
+
+  constructor(webApiStreams: WebApiStreamConfig[] = []) {
+    this.streams.set('clock', new ClockStream());
+    this.streams.set('inbox', new InboxStream(this.messages));
+    this.subscriptions.add('clock');
+    this.subscriptions.add('inbox');
+
+    for (const config of webApiStreams) {
+      if (!config.name.trim() || !config.url.trim()) continue;
+      this.streams.set(config.name, new WebApiStream(config.name, config));
+      if (config.subscribed !== false) {
+        this.subscriptions.add(config.name);
+      }
+    }
+  }
 
   subscribe(stream: string): boolean {
     const changed = !this.subscriptions.has(stream);
@@ -183,16 +272,21 @@ export class StreamRegistry {
     return true;
   }
 
-  popDeltas(context: StreamPopContext): StreamDelta[] {
-    return [...this.streams.values()]
-      .filter(stream => this.isSubscribed(stream.name))
-      .flatMap(stream => {
-        if (!stream.hasDelta(context.now)) {
-          return [];
-        }
-        const delta = stream.popDelta(context);
-        return delta ? [delta] : [];
-      });
+  async popDeltas(context: StreamPopContext): Promise<StreamDelta[]> {
+    const deltas: StreamDelta[] = [];
+    for (const stream of this.streams.values()) {
+      if (!this.isSubscribed(stream.name)) {
+        continue;
+      }
+      if (!stream.sampled && !stream.hasDelta(context.now)) {
+        continue;
+      }
+      const delta = await stream.popDelta(context);
+      if (delta) {
+        deltas.push(delta);
+      }
+    }
+    return deltas;
   }
 
   hasPending(now = new Date()): boolean {
@@ -271,6 +365,14 @@ function preview(content: string): string {
   const text = content.replace(/\s+/g, ' ').trim();
   if (!text) return '(empty message)';
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }
 
 function deliveryModeFor(stream: string, capabilities: ModelCapabilities): string {
