@@ -112,6 +112,7 @@ export type WatchEvent =
   | { type: 'discord_started'; at: string; userId: string; username: string }
   | { type: 'discord_stopped'; at: string; reason: string }
   | { type: 'discord_inbound'; at: string; messageId: string; channelId: string; authorId: string; reason: string }
+  | { type: 'discord_outbound'; at: string; soundingId: string; replyToId?: number; messageIds: string[] }
   | { type: 'discord_dropped'; at: string; messageId?: string; channelId?: string; authorId?: string; reason: string }
   | { type: 'discord_attention_changed'; at: string; action: string; scope: JsonObject; policy: JsonObject }
   | { type: 'discord_error'; at: string; error: JsonObject }

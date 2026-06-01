@@ -430,18 +430,37 @@ export class Lookout {
           additionalProperties: false,
         }),
         execute: async ({ medium, message, replyToId }) => {
-          if (medium !== 'cli') {
-            return { ok: false, error: `Unsupported medium: ${medium}`, supportedMedia: ['cli'] };
+          if (medium === 'cli') {
+            this.log.append({
+              type: 'cli_message',
+              at: new Date().toISOString(),
+              soundingId: sounding.id,
+              medium,
+              replyToId,
+              message,
+            });
+            return { ok: true, delivered: medium, replyToId };
           }
-          this.log.append({
-            type: 'cli_message',
-            at: new Date().toISOString(),
-            soundingId: sounding.id,
-            medium,
-            replyToId,
-            message,
-          });
-          return { ok: true, delivered: medium, replyToId };
+          if (medium === 'discord') {
+            if (!this.discord) return { ok: false, error: 'Discord bridge is not configured.' };
+            const result = await this.discord.sendMessage({ replyToId, message });
+            if (result.ok === true) {
+              const messageIds = Array.isArray(result.messages)
+                ? result.messages
+                    .map(entry => entry && typeof entry === 'object' && 'messageId' in entry ? String(entry.messageId) : '')
+                    .filter(Boolean)
+                : [];
+              this.log.append({
+                type: 'discord_outbound',
+                at: new Date().toISOString(),
+                soundingId: sounding.id,
+                replyToId,
+                messageIds,
+              });
+            }
+            return result;
+          }
+          return { ok: false, error: `Unsupported medium: ${medium}`, supportedMedia: ['cli', 'discord'] };
         },
       }),
       discord_attention: tool({

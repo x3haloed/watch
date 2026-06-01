@@ -28,6 +28,9 @@ type AttentionScope =
   | { kind: 'guild' | 'channel' | 'thread' | 'user'; id: string };
 
 type WatchableDiscordScope = { kind: 'channel' | 'thread'; id: string };
+type SendableDiscordChannel = TextBasedChannel & {
+  send(payload: Record<string, unknown>): Promise<Message>;
+};
 
 export type DiscordContextReadInput = {
   inboxMessageId?: number;
@@ -38,6 +41,11 @@ export type DiscordContextReadInput = {
   beforeMessageId?: string;
   afterMessageId?: string;
   limit?: number;
+};
+
+export type DiscordSendInput = {
+  replyToId?: number;
+  message: string;
 };
 
 export class DiscordBridge {
@@ -223,6 +231,54 @@ export class DiscordBridge {
           : undefined,
       },
     };
+  }
+
+  async sendMessage(input: DiscordSendInput): Promise<Record<string, unknown>> {
+    if (!this.isEnabled()) {
+      return { ok: false, error: 'Discord bridge is not enabled.' };
+    }
+    if (!this.client.isReady()) {
+      return { ok: false, error: 'Discord bridge is not connected.' };
+    }
+    if (input.replyToId === undefined) {
+      return { ok: false, error: 'Discord send_message requires replyToId from a Discord inbox message.' };
+    }
+
+    const stored = this.streams.getMessage(input.replyToId);
+    const discord = readDiscordMetadata(stored?.metadata);
+    if (!discord) {
+      return { ok: false, error: `Inbox message ${input.replyToId} is not a Discord message.` };
+    }
+
+    const channel = await this.fetchTextChannel(discord.channelId);
+    if (!channel) {
+      return { ok: false, error: `Discord channel not found or not text-readable: ${discord.channelId}` };
+    }
+    if (!isSendableChannel(channel)) {
+      return { ok: false, error: `Discord channel is not sendable: ${discord.channelId}` };
+    }
+
+    const chunks = chunkDiscordMessage(input.message);
+    const sent = [];
+    for (const [index, chunk] of chunks.entries()) {
+      const payload = {
+        content: chunk,
+        allowedMentions: { repliedUser: index === 0, parse: [] },
+        reply: index === 0 ? { messageReference: discord.messageId, failIfNotExists: false } : undefined,
+      };
+      const result = await channel.send(payload).catch((error: unknown) => error);
+      if (result instanceof Error) {
+        return { ok: false, error: errorMessage(result), delivered: sent };
+      }
+      const sentMessage = result as Message;
+      sent.push({
+        messageId: sentMessage.id,
+        channelId: sentMessage.channelId,
+        url: sentMessage.url,
+      });
+    }
+
+    return { ok: true, delivered: 'discord', replyToId: input.replyToId, messages: sent };
   }
 
   private async handleMessage(message: Message): Promise<void> {
@@ -539,6 +595,33 @@ function channelDisplayName(channel: TextBasedChannel): string {
   return channel.id;
 }
 
+function isSendableChannel(channel: TextBasedChannel): channel is SendableDiscordChannel {
+  return 'send' in channel && typeof channel.send === 'function';
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function chunkDiscordMessage(message: string): string[] {
+  const text = message.trim();
+  if (!text) return ['(empty message)'];
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= 2000) {
+      chunks.push(remaining);
+      break;
+    }
+    const splitAt = bestDiscordSplitIndex(remaining);
+    chunks.push(remaining.slice(0, splitAt).trimEnd());
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+  return chunks;
+}
+
+function bestDiscordSplitIndex(text: string): number {
+  const limit = 2000;
+  const candidates = [text.lastIndexOf('\n\n', limit), text.lastIndexOf('\n', limit), text.lastIndexOf(' ', limit)];
+  return candidates.find(index => index > 1000) ?? limit;
 }
