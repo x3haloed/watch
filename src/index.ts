@@ -122,7 +122,12 @@ function sleep(ms: number): Promise<void> {
 
 function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
   const file = readWatchConfig(repoRoot);
-  const defaultModel = stringFlag(args, '--model') ?? file.defaultModel ?? 'openrouter:anthropic/claude-sonnet-4.5';
+  const defaultModel = stringFlag(args, '--model') ?? file.defaultModel;
+  if (!defaultModel?.trim()) {
+    throw new Error(
+      'No default model configured. Set defaultModel in watch.config.json or pass --model. Watch no longer falls back to a paid hosted model.',
+    );
+  }
   return {
     repoRoot,
     minCffMs: numberFlag(args, '--min-cff-ms') ?? file.minCffMs ?? 2_000,

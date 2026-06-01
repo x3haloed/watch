@@ -31,11 +31,6 @@ const MODELS_DEV_URL = 'https://models.dev/api.json';
 const MODELS_DEV_CACHE_TTL_MS = 60 * 60 * 1000;
 
 const DEFAULT_MODELS: Record<string, Omit<ModelConfig, 'id'>> = {
-  'openrouter:anthropic/claude-sonnet-4.5': {
-    provider: 'openrouter',
-    model: 'anthropic/claude-sonnet-4.5',
-    apiKeyEnv: 'OPENROUTER_API_KEY',
-  },
   'local:auto': {
     provider: 'openai-compatible',
     model: 'auto',
@@ -74,7 +69,7 @@ export class ModelRegistry {
     }
   }
 
-  static load(repoRoot: string, cliModel?: string, cliModels?: string[]): ModelRegistry {
+  static load(repoRoot: string, cliModel: string, cliModels?: string[]): ModelRegistry {
     const file = readConfigFile(repoRoot);
     const modelEntries = new Map<string, ModelConfig>();
 
@@ -96,7 +91,10 @@ export class ModelRegistry {
       modelEntries.set(cliModel, inferModelConfig(cliModel));
     }
 
-    const defaultModel = cliModel ?? file.defaultModel ?? 'openrouter:anthropic/claude-sonnet-4.5';
+    const defaultModel = cliModel || file.defaultModel;
+    if (!defaultModel?.trim()) {
+      throw new Error('No default model configured. Set defaultModel in watch.config.json or pass --model.');
+    }
     if (!modelEntries.has(defaultModel)) {
       modelEntries.set(defaultModel, inferModelConfig(defaultModel));
     }
