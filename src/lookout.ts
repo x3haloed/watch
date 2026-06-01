@@ -192,7 +192,7 @@ export class Lookout {
         throw new ModelReroute(modelId, model, params);
       }
 
-      this.messages.push({ role: 'assistant', content: result.text });
+      this.messages.push(...result.response.messages);
       return { text: result.text, toolCallCount };
     } catch (error) {
       this.pendingReroute = undefined;
