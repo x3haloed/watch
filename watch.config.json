@@ -1,0 +1,48 @@
+{
+  "defaultModel": "openrouter:deepseek/deepseek-v4-flash",
+  "restingModel": "openrouter:google/gemma-3-12b-it",
+  "restAfterNoToolSoundings": 3,
+  "webApiStreams": [
+    {
+      "name": "usgs:earthquakes:all_hour",
+      "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
+      "subscribed": true,
+      "waking": false
+    }
+  ],
+  "minCffMs": 10000,
+  "maxCffMs": 100000,
+  "modelTimeoutMs": 120000,
+  "models": {
+    "openrouter:google/gemma-4-26b-a4b-it": {
+      "provider": "openrouter",
+      "model": "google/gemma-4-26b-a4b-it",
+      "apiKeyEnv": "OPENROUTER_API_KEY"
+    },
+    "openrouter:google/gemini-3.5-flash": {
+      "provider": "openrouter",
+      "model": "google/gemini-3.5-flash",
+      "apiKeyEnv": "OPENROUTER_API_KEY"
+    },
+    "openrouter:xiaomi/mimo-v2.5": {
+      "provider": "openrouter",
+      "model": "xiaomi/mimo-v2.5",
+      "apiKeyEnv": "OPENROUTER_API_KEY"
+    },
+    "local:unsloth/gemma-3-12b-it-Q6_K": {
+      "provider": "openai-compatible",
+      "model": "unsloth/gemma-3-12b-it-Q6_K",
+      "baseURL": "http://localhost:1337/v1",
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "capabilities": {
+        "tools": true,
+        "text": true,
+        "reasoning": false
+      }
+    }
+  },
+  "discord": {
+    "enabled": true,
+    "tokenEnv": "DISCORD_BOT_TOKEN"
+  }
+}
