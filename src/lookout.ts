@@ -454,6 +454,37 @@ export class Lookout {
         }),
         execute: async () => this.discord?.getAttention() ?? { enabled: false, reason: 'Discord bridge is not configured.' },
       }),
+      discord_read_context: tool({
+        description:
+          'Read a stable Discord message window for more context. Prefer inboxMessageId from an opened Discord inbox message. Returns chronological messages plus ready-made older/newer continuation args.',
+        inputSchema: jsonSchema<{
+          inboxMessageId?: number;
+          channelId?: string;
+          messageId?: string;
+          before?: number;
+          after?: number;
+          beforeMessageId?: string;
+          afterMessageId?: string;
+          limit?: number;
+        }>({
+          type: 'object',
+          properties: {
+            inboxMessageId: { type: 'number', description: 'Watch inbox message ID to center around. Best default after open_message.' },
+            channelId: { type: 'string', description: 'Discord channel/thread ID. Required if inboxMessageId is not provided.' },
+            messageId: { type: 'string', description: 'Discord message ID to center around.' },
+            before: { type: 'number', description: 'Centered mode: number of older messages. Defaults to 20, max 50.' },
+            after: { type: 'number', description: 'Centered mode: number of newer messages. Defaults to 5, max 50.' },
+            beforeMessageId: { type: 'string', description: 'Directional mode: read older messages before this Discord message ID.' },
+            afterMessageId: { type: 'string', description: 'Directional mode: read newer messages after this Discord message ID.' },
+            limit: { type: 'number', description: 'Directional/latest mode: number of messages. Defaults to 25, max 50.' },
+          },
+          additionalProperties: false,
+        }),
+        execute: async input => {
+          if (!this.discord) return { ok: false, error: 'Discord bridge is not configured.' };
+          return this.discord.readContext(input);
+        },
+      }),
       discord_mute: tool({
         description:
           'Stop Discord inbox delivery for a scope. Use kind dms, mentions, or replies for default surfaces; use guild, channel, thread, or user with id for specific muting.',
@@ -773,6 +804,7 @@ Inbox deltas are indexes, not full messages. When an inbox entry says to call op
 Only send_message creates human-visible speech. Your final assistant text is private working speech and is not delivered to the user.
 Use subscribe_stream and unsubscribe_stream to control your gaze.
 Use discord_attention, discord_mute, discord_unmute, discord_watch, and discord_unwatch to control Discord-specific inbound attention.
+Use discord_read_context when a Discord inbox message needs surrounding thread/channel context; prefer inboxMessageId and follow the returned older/newer continuation args.
 Use handle_with_model when the current Sounding calls for a larger model, stronger reasoning, or different modalities than the active model has.
 Use terminal for builds, tests, package managers, git, scripts, long-running processes, and network checks. Prefer filesystem tools for file reads, searches, writes, and patches. Use terminal background sessions only for servers or watchers that keep running.
 Do not narrate internal routing unless it matters to an external observer.`;

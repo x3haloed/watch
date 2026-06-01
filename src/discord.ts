@@ -5,6 +5,7 @@ import {
   GatewayIntentBits,
   Partials,
   type Message,
+  type TextBasedChannel,
 } from 'discord.js';
 import { EventLog } from './event-log.js';
 import { StreamRegistry } from './streams.js';
@@ -27,6 +28,17 @@ type AttentionScope =
   | { kind: 'guild' | 'channel' | 'thread' | 'user'; id: string };
 
 type WatchableDiscordScope = { kind: 'channel' | 'thread'; id: string };
+
+export type DiscordContextReadInput = {
+  inboxMessageId?: number;
+  channelId?: string;
+  messageId?: string;
+  before?: number;
+  after?: number;
+  beforeMessageId?: string;
+  afterMessageId?: string;
+  limit?: number;
+};
 
 export class DiscordBridge {
   private readonly client: Client;
@@ -137,6 +149,82 @@ export class DiscordBridge {
     return { ok: true, attention: this.getAttention() };
   }
 
+  async readContext(input: DiscordContextReadInput): Promise<Record<string, unknown>> {
+    if (!this.isEnabled()) {
+      return { ok: false, error: 'Discord bridge is not enabled.' };
+    }
+    if (!this.client.isReady()) {
+      return { ok: false, error: 'Discord bridge is not connected.' };
+    }
+
+    const anchor = this.resolveContextAnchor(input);
+    if (!anchor.ok) {
+      return anchor;
+    }
+    const channel = await this.fetchTextChannel(anchor.channelId);
+    if (!channel) {
+      return { ok: false, error: `Discord channel not found or not text-readable: ${anchor.channelId}` };
+    }
+
+    const mode = input.beforeMessageId ? 'older' : input.afterMessageId ? 'newer' : 'centered';
+    const messages = await this.fetchContextMessages(channel, anchor, input);
+    if (!messages.ok) {
+      return messages;
+    }
+    const ordered = [...messages.messages].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+    const oldest = ordered[0];
+    const newest = ordered.at(-1);
+
+    return {
+      ok: true,
+      mode,
+      channel: {
+        id: channel.id,
+        name: channelDisplayName(channel),
+        guildId: 'guildId' in channel ? channel.guildId : undefined,
+      },
+      anchor: {
+        inboxMessageId: input.inboxMessageId,
+        channelId: anchor.channelId,
+        messageId: anchor.messageId,
+      },
+      window: {
+        count: ordered.length,
+        oldestMessageId: oldest?.id,
+        newestMessageId: newest?.id,
+        oldestAt: oldest?.createdAt.toISOString(),
+        newestAt: newest?.createdAt.toISOString(),
+      },
+      messages: ordered.map(formatContextMessage),
+      text: formatContextText({ mode, channel, anchorMessageId: anchor.messageId, messages: ordered }),
+      next: {
+        older: oldest
+          ? {
+              tool: 'discord_read_context',
+              args: { channelId: anchor.channelId, beforeMessageId: oldest.id, limit: messages.limit },
+            }
+          : undefined,
+        newer: newest
+          ? {
+              tool: 'discord_read_context',
+              args: { channelId: anchor.channelId, afterMessageId: newest.id, limit: messages.limit },
+            }
+          : undefined,
+        recenter: anchor.messageId
+          ? {
+              tool: 'discord_read_context',
+              args: {
+                channelId: anchor.channelId,
+                messageId: anchor.messageId,
+                before: messages.before,
+                after: messages.after,
+              },
+            }
+          : undefined,
+      },
+    };
+  }
+
   private async handleMessage(message: Message): Promise<void> {
     const fullMessage = message.partial ? await message.fetch().catch(() => message) : message;
     const author = fullMessage.author;
@@ -204,6 +292,76 @@ export class DiscordBridge {
       stream: 'inbox',
       payload: { source: 'discord', reason },
     });
+  }
+
+  private resolveContextAnchor(
+    input: DiscordContextReadInput,
+  ): { ok: true; channelId: string; messageId?: string } | { ok: false; error: string } {
+    if (input.inboxMessageId !== undefined) {
+      const stored = this.streams.getMessage(input.inboxMessageId);
+      const discord = readDiscordMetadata(stored?.metadata);
+      if (!discord) {
+        return { ok: false, error: `Inbox message ${input.inboxMessageId} is not a Discord message.` };
+      }
+      return { ok: true, channelId: discord.channelId, messageId: discord.messageId };
+    }
+
+    const channelId = input.channelId?.trim();
+    if (!channelId) {
+      return { ok: false, error: 'Provide inboxMessageId or channelId.' };
+    }
+
+    const messageId = input.messageId?.trim() || input.beforeMessageId?.trim() || input.afterMessageId?.trim();
+    return { ok: true, channelId, messageId };
+  }
+
+  private async fetchTextChannel(channelId: string): Promise<TextBasedChannel | undefined> {
+    const cached = this.client.channels.cache.get(channelId);
+    const channel = cached ?? await this.client.channels.fetch(channelId).catch(() => null);
+    if (!channel || !('messages' in channel)) {
+      return undefined;
+    }
+    return channel as TextBasedChannel;
+  }
+
+  private async fetchContextMessages(
+    channel: TextBasedChannel,
+    anchor: { channelId: string; messageId?: string },
+    input: DiscordContextReadInput,
+  ): Promise<
+    | { ok: true; messages: Message[]; before: number; after: number; limit: number }
+    | { ok: false; error: string }
+  > {
+    const limit = clampInt(input.limit, 25, 1, 50);
+    if (input.beforeMessageId?.trim()) {
+      const older = await channel.messages.fetch({ before: input.beforeMessageId.trim(), limit }).catch(error => error);
+      if (!(older instanceof Map)) return { ok: false, error: errorMessage(older) };
+      return { ok: true, messages: [...older.values()], before: limit, after: 0, limit };
+    }
+    if (input.afterMessageId?.trim()) {
+      const newer = await channel.messages.fetch({ after: input.afterMessageId.trim(), limit }).catch(error => error);
+      if (!(newer instanceof Map)) return { ok: false, error: errorMessage(newer) };
+      return { ok: true, messages: [...newer.values()], before: 0, after: limit, limit };
+    }
+    if (!anchor.messageId) {
+      const latest = await channel.messages.fetch({ limit }).catch(error => error);
+      if (!(latest instanceof Map)) return { ok: false, error: errorMessage(latest) };
+      return { ok: true, messages: [...latest.values()], before: limit, after: 0, limit };
+    }
+
+    const before = clampInt(input.before, 20, 0, 50);
+    const after = clampInt(input.after, 5, 0, 50);
+    const [anchorMessage, older, newer] = await Promise.all([
+      channel.messages.fetch(anchor.messageId).catch(error => error),
+      before > 0 ? channel.messages.fetch({ before: anchor.messageId, limit: before }).catch(error => error) : Promise.resolve(new Map()),
+      after > 0 ? channel.messages.fetch({ after: anchor.messageId, limit: after }).catch(error => error) : Promise.resolve(new Map()),
+    ]);
+    if (anchorMessage instanceof Error) return { ok: false, error: errorMessage(anchorMessage) };
+    if (!(older instanceof Map)) return { ok: false, error: errorMessage(older) };
+    if (!(newer instanceof Map)) return { ok: false, error: errorMessage(newer) };
+    const messages = [anchorMessage as Message, ...older.values(), ...newer.values()];
+    const deduped = [...new Map(messages.map(message => [message.id, message])).values()];
+    return { ok: true, messages: deduped, before, after, limit: Math.max(1, before + after + 1) };
   }
 
   private acceptanceReason(message: Message): string | undefined {
@@ -321,4 +479,66 @@ function errorToJson(error: unknown): Record<string, unknown> {
     return { name: error.name, message: error.message, stack: error.stack };
   }
   return { value: String(error) };
+}
+
+function readDiscordMetadata(metadata: unknown): { channelId: string; messageId: string } | undefined {
+  if (!metadata || typeof metadata !== 'object') return undefined;
+  const discord = (metadata as { discord?: unknown }).discord;
+  if (!discord || typeof discord !== 'object') return undefined;
+  const channelId = (discord as { channelId?: unknown }).channelId;
+  const messageId = (discord as { messageId?: unknown }).messageId;
+  return typeof channelId === 'string' && typeof messageId === 'string' ? { channelId, messageId } : undefined;
+}
+
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(min, Math.min(max, Math.floor(value)))
+    : fallback;
+}
+
+function formatContextMessage(message: Message): JsonObject {
+  return {
+    id: message.id,
+    at: message.createdAt.toISOString(),
+    authorId: message.author?.id,
+    authorName: message.author?.tag ?? message.author?.username ?? 'unknown',
+    content: message.content,
+    attachmentCount: message.attachments.size,
+    referencedMessageId: message.reference?.messageId,
+    url: message.url,
+  };
+}
+
+function formatContextText(params: {
+  mode: string;
+  channel: TextBasedChannel;
+  anchorMessageId?: string;
+  messages: Message[];
+}): string {
+  const lines = params.messages.map(message => {
+    const marker = message.id === params.anchorMessageId ? '>' : ' ';
+    const time = message.createdAt.toISOString();
+    const author = message.author?.tag ?? message.author?.username ?? 'unknown';
+    const content = message.content.replace(/\s+/g, ' ').trim() || attachmentSummary(message);
+    return `${marker} [${message.id}] ${time} ${author}: ${content}`;
+  });
+  return [
+    `Discord context ${params.mode}: ${channelDisplayName(params.channel)}`,
+    params.anchorMessageId ? `Anchor: ${params.anchorMessageId}` : undefined,
+    lines.join('\n') || '(no messages)',
+  ].filter(Boolean).join('\n');
+}
+
+function attachmentSummary(message: Message): string {
+  return message.attachments.size > 0 ? `[${message.attachments.size} attachment(s)]` : '(empty message)';
+}
+
+function channelDisplayName(channel: TextBasedChannel): string {
+  if (channel.type === ChannelType.DM) return 'DM';
+  if ('name' in channel && channel.name) return `#${channel.name}`;
+  return channel.id;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
