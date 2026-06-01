@@ -4,12 +4,14 @@ import { EventLog } from './event-log.js';
 import { Lookout, type RestModelNotice } from './lookout.js';
 import { StreamRegistry } from './streams.js';
 import { ModelRegistry } from './model-registry.js';
+import { DiscordBridge } from './discord.js';
 
 export class WatchRuntime {
   private readonly streams: StreamRegistry;
   private readonly log: EventLog;
   private readonly lookout: Lookout;
   private readonly models: ModelRegistry;
+  private readonly discord: DiscordBridge;
   private lastSoundingAt = Date.now();
   private running = false;
   private tickTimer: NodeJS.Timeout | undefined;
@@ -27,6 +29,7 @@ export class WatchRuntime {
     this.streams = new StreamRegistry(config.webApiStreams);
     this.log = new EventLog(config.repoRoot);
     this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
+    this.discord = new DiscordBridge(config.discord, this.streams, this.log);
     this.restingModelId = config.restingModel ?? config.defaultModel;
     this.lookout = new Lookout(
       this.streams,
@@ -36,6 +39,7 @@ export class WatchRuntime {
       config.repoRoot,
       this.restingModelId,
       config.restAfterNoToolSoundings,
+      this.discord,
     );
   }
 
@@ -45,6 +49,7 @@ export class WatchRuntime {
     }
     this.running = true;
     this.log.append({ type: 'daemon_started', at: new Date().toISOString(), pid: process.pid, config: this.config });
+    void this.discord.start();
     this.clockTimer = setInterval(() => this.sampleClock(), 250);
     this.tickTimer = setInterval(() => void this.maybeSound(), 100);
   }
@@ -55,6 +60,7 @@ export class WatchRuntime {
     if (this.clockTimer) clearInterval(this.clockTimer);
     this.soundQueued = false;
     this.activeAbortController?.abort(reason);
+    await this.discord.stop(reason);
     this.log.append({ type: 'daemon_stopped', at: new Date().toISOString(), reason });
   }
 
@@ -97,6 +103,7 @@ export class WatchRuntime {
           availableModels: this.models.listModelIds(),
           activeModel: await this.models.getActive(),
           subscriptions: this.streams.listSubscriptions(),
+          discord: this.discord.getAttention(),
           minCffMs: this.config.minCffMs,
           maxCffMs: this.config.maxCffMs,
           modelTimeoutMs: this.config.modelTimeoutMs,

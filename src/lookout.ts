@@ -8,6 +8,7 @@ import { buildContextPrompt } from './context-files.js';
 import { RepoFileTools } from './file-tools.js';
 import { SkillLibrary } from './skills.js';
 import { TerminalTools } from './terminal-tools.js';
+import { DiscordBridge, parseDiscordAttentionScope } from './discord.js';
 
 export type RestModelNotice = {
   fromModelId: string;
@@ -38,6 +39,7 @@ export class Lookout {
     repoRoot: string,
     private readonly restingModelId?: string,
     private readonly restAfterNoToolSoundings = 3,
+    private readonly discord?: DiscordBridge,
   ) {
     this.cwd = repoRoot;
     this.fileTools = new RepoFileTools(repoRoot);
@@ -381,6 +383,7 @@ export class Lookout {
               subject: message.subject,
               receivedAt: message.receivedAt,
               content: message.content,
+              metadata: message.metadata,
             },
             next_actions: [
               `To reply to this message, call send_message with medium "${message.medium}", replyToId ${message.id}, and your message content.`,
@@ -439,6 +442,84 @@ export class Lookout {
             message,
           });
           return { ok: true, delivered: medium, replyToId };
+        },
+      }),
+      discord_attention: tool({
+        description:
+          'Inspect Discord inbound attention. Discord delivers DMs, bot mentions, and replies by default unless muted. Watched channels or threads are also delivered into inbox.',
+        inputSchema: jsonSchema<Record<string, never>>({
+          type: 'object',
+          properties: {},
+          additionalProperties: false,
+        }),
+        execute: async () => this.discord?.getAttention() ?? { enabled: false, reason: 'Discord bridge is not configured.' },
+      }),
+      discord_mute: tool({
+        description:
+          'Stop Discord inbox delivery for a scope. Use kind dms, mentions, or replies for default surfaces; use guild, channel, thread, or user with id for specific muting.',
+        inputSchema: jsonSchema<{ kind: string; id?: string }>({
+          type: 'object',
+          properties: {
+            kind: { type: 'string', description: 'One of dms, mentions, replies, guild, channel, thread, user.' },
+            id: { type: 'string', description: 'Required for guild, channel, thread, and user scopes.' },
+          },
+          required: ['kind'],
+          additionalProperties: false,
+        }),
+        execute: async ({ kind, id }) => {
+          if (!this.discord) return { ok: false, error: 'Discord bridge is not configured.' };
+          return this.discord.mute(parseDiscordAttentionScope(kind, id));
+        },
+      }),
+      discord_unmute: tool({
+        description:
+          'Restore Discord inbox delivery for a muted scope. Use kind dms, mentions, or replies for default surfaces; use guild, channel, thread, or user with id for specific muting.',
+        inputSchema: jsonSchema<{ kind: string; id?: string }>({
+          type: 'object',
+          properties: {
+            kind: { type: 'string', description: 'One of dms, mentions, replies, guild, channel, thread, user.' },
+            id: { type: 'string', description: 'Required for guild, channel, thread, and user scopes.' },
+          },
+          required: ['kind'],
+          additionalProperties: false,
+        }),
+        execute: async ({ kind, id }) => {
+          if (!this.discord) return { ok: false, error: 'Discord bridge is not configured.' };
+          return this.discord.unmute(parseDiscordAttentionScope(kind, id));
+        },
+      }),
+      discord_watch: tool({
+        description:
+          'Begin delivering all messages from a Discord channel or thread into inbox, even when they are not DMs, mentions, or replies.',
+        inputSchema: jsonSchema<{ kind: 'channel' | 'thread'; id: string }>({
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['channel', 'thread'], description: 'Watch a channel or thread.' },
+            id: { type: 'string', description: 'Discord channel or thread ID.' },
+          },
+          required: ['kind', 'id'],
+          additionalProperties: false,
+        }),
+        execute: async ({ kind, id }) => {
+          if (!this.discord) return { ok: false, error: 'Discord bridge is not configured.' };
+          return this.discord.watch({ kind, id });
+        },
+      }),
+      discord_unwatch: tool({
+        description:
+          'Stop delivering all messages from a watched Discord channel or thread. Default DMs, mentions, and replies still apply unless muted separately.',
+        inputSchema: jsonSchema<{ kind: 'channel' | 'thread'; id: string }>({
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['channel', 'thread'], description: 'Unwatch a channel or thread.' },
+            id: { type: 'string', description: 'Discord channel or thread ID.' },
+          },
+          required: ['kind', 'id'],
+          additionalProperties: false,
+        }),
+        execute: async ({ kind, id }) => {
+          if (!this.discord) return { ok: false, error: 'Discord bridge is not configured.' };
+          return this.discord.unwatch({ kind, id });
         },
       }),
       subscribe_stream: tool({
@@ -691,6 +772,7 @@ Treat incoming user messages as inbox deltas, not commands that automatically de
 Inbox deltas are indexes, not full messages. When an inbox entry says to call open_message with an ID, call open_message to read it.
 Only send_message creates human-visible speech. Your final assistant text is private working speech and is not delivered to the user.
 Use subscribe_stream and unsubscribe_stream to control your gaze.
+Use discord_attention, discord_mute, discord_unmute, discord_watch, and discord_unwatch to control Discord-specific inbound attention.
 Use handle_with_model when the current Sounding calls for a larger model, stronger reasoning, or different modalities than the active model has.
 Use terminal for builds, tests, package managers, git, scripts, long-running processes, and network checks. Prefer filesystem tools for file reads, searches, writes, and patches. Use terminal background sessions only for servers or watchers that keep running.
 Do not narrate internal routing unless it matters to an external observer.`;

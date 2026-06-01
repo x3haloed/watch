@@ -7,6 +7,7 @@ export type StoredMessage = {
   subject: string;
   content: string;
   receivedAt: string;
+  metadata?: JsonObject;
 };
 
 export type StreamPopContext = {
@@ -65,6 +66,7 @@ class InboxStream implements WatchStream {
       source: String(payload.source ?? payload.medium ?? 'cli'),
       subject: typeof payload.subject === 'string' ? payload.subject : undefined,
       content: String(payload.message ?? payload.content ?? ''),
+      metadata: isJsonObject(payload.metadata) ? payload.metadata : undefined,
     });
     this.pendingIds.push(message.id);
   }
@@ -326,7 +328,7 @@ class MessageStore {
   private nextId = 1;
   private readonly messages = new Map<number, StoredMessage>();
 
-  add(input: { medium: string; source: string; subject?: string; content: string }): StoredMessage {
+  add(input: { medium: string; source: string; subject?: string; content: string; metadata?: JsonObject }): StoredMessage {
     const id = this.nextId++;
     const content = input.content;
     const message: StoredMessage = {
@@ -336,6 +338,7 @@ class MessageStore {
       subject: input.subject?.trim() || preview(content),
       content,
       receivedAt: new Date().toISOString(),
+      metadata: input.metadata,
     };
     this.messages.set(id, message);
     return message;
@@ -367,6 +370,10 @@ class MessageStore {
       totalPages,
     };
   }
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 function preview(content: string): string {

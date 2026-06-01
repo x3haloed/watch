@@ -14,6 +14,7 @@ type WatchConfigFile = {
   maxCffMs?: number;
   webApiStreams?: WebApiStreamConfig[];
   restAfterNoToolSoundings?: number;
+  discord?: WatchConfig['discord'];
 };
 
 async function main(): Promise<void> {
@@ -129,6 +130,7 @@ function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
     modelTimeoutMs: numberFlag(args, '--model-timeout-ms') ?? 120_000,
     defaultModel,
     webApiStreams: Array.isArray(file.webApiStreams) ? file.webApiStreams : [],
+    discord: file.discord,
     restingModel: stringFlag(args, '--resting-model') ?? file.restingModel ?? file.defaultModel ?? defaultModel,
     restAfterNoToolSoundings: numberFlag(args, '--rest-after-no-tool-soundings') ?? file.restAfterNoToolSoundings ?? 3,
     availableModels: (stringFlag(args, '--models') ?? '')

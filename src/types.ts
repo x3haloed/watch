@@ -8,6 +8,7 @@ export type WatchConfig = {
   defaultModel: string;
   availableModels: string[];
   webApiStreams: WebApiStreamConfig[];
+  discord?: DiscordConfig;
   restingModel?: string;
   restAfterNoToolSoundings: number;
   noModel: boolean;
@@ -19,6 +20,20 @@ export type WebApiStreamConfig = {
   headers?: Record<string, string>;
   waking?: boolean;
   subscribed?: boolean;
+};
+
+export type DiscordConfig = {
+  enabled?: boolean;
+  tokenEnv?: string;
+  defaultDMs?: boolean;
+  defaultMentions?: boolean;
+  defaultReplies?: boolean;
+  mutedGuilds?: string[];
+  mutedChannels?: string[];
+  mutedThreads?: string[];
+  mutedUsers?: string[];
+  watchedChannels?: string[];
+  watchedThreads?: string[];
 };
 
 export type ModelProvider = 'openrouter' | 'openai-compatible';
@@ -94,6 +109,12 @@ export type WatchEvent =
   | { type: 'terminal_killed'; at: string; soundingId: string; sessionId: string }
   | { type: 'cli_message'; at: string; soundingId: string; medium?: string; replyToId?: number; message: string }
   | { type: 'subscription_changed'; at: string; stream: string; subscribed: boolean }
+  | { type: 'discord_started'; at: string; userId: string; username: string }
+  | { type: 'discord_stopped'; at: string; reason: string }
+  | { type: 'discord_inbound'; at: string; messageId: string; channelId: string; authorId: string; reason: string }
+  | { type: 'discord_dropped'; at: string; messageId?: string; channelId?: string; authorId?: string; reason: string }
+  | { type: 'discord_attention_changed'; at: string; action: string; scope: JsonObject; policy: JsonObject }
+  | { type: 'discord_error'; at: string; error: JsonObject }
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }
   | { type: 'model_skipped'; at: string; soundingId: string; reason: string };
 
