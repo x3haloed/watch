@@ -22,6 +22,7 @@ export class Lookout {
   private readonly terminalTools: TerminalTools;
   private readonly contextPrompt: Promise<string>;
   private readonly cwd: string;
+  private pendingReroute: { modelId: string; model: ResolvedModel; params: Record<string, unknown> } | undefined;
 
   constructor(
     private readonly streams: StreamRegistry,
@@ -176,9 +177,17 @@ export class Lookout {
         timeout: options.timeoutMs,
       });
 
+      if (this.pendingReroute) {
+        const { modelId, model, params } = this.pendingReroute;
+        this.pendingReroute = undefined;
+        this.messages.pop();
+        throw new ModelReroute(modelId, model, params);
+      }
+
       this.messages.push({ role: 'assistant', content: result.text });
       return { text: result.text, toolCallCount };
     } catch (error) {
+      this.pendingReroute = undefined;
       this.messages.pop();
       if (error instanceof ModelReroute) {
       } else {
@@ -495,7 +504,8 @@ export class Lookout {
           } catch (error) {
             return { ok: false, error: error instanceof Error ? error.message : String(error) };
           }
-          throw new ModelReroute(modelId, model, { modelId });
+          this.pendingReroute = { modelId, model, params: { modelId } };
+          return { ok: true, rerouteRequested: true, toModel: modelId };
         },
       }),
       report_gaze: tool({
