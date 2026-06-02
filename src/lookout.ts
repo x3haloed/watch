@@ -1,4 +1,4 @@
-import { ToolLoopAgent, jsonSchema, stepCountIs, tool } from 'ai';
+import { ToolLoopAgent, jsonSchema, stepCountIs, tool, type ToolCallRepairFunction, type ToolSet } from 'ai';
 import type { ModelMessage } from 'ai';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -20,6 +20,8 @@ import {
   type MediaDescriptor,
   type OpenedMedia,
 } from './media.js';
+
+const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 
 export type RestModelNotice = {
   fromModelId: string;
@@ -172,6 +174,8 @@ export class Lookout {
         instructions: await this.instructions(),
         tools: this.createTools(sounding, model),
         stopWhen: stepCountIs(20),
+        maxOutputTokens: maxOutputTokensForModel(model),
+        experimental_repairToolCall: repairFlatToolCall,
         onStepFinish: step => {
           toolCallCount += countToolCalls(step);
           this.log.append({
@@ -459,9 +463,20 @@ export class Lookout {
           additionalProperties: false,
         }),
         execute: async ({ id }) => {
+          if (!Number.isFinite(id)) {
+            return {
+              ok: false,
+              error: 'open_message requires a numeric id from an inbox delta. No id was provided.',
+              hint: 'Look at the latest [deltas] inbox entry and call open_message with that numeric id, or call message_page with medium "cli" or "discord" to list recent message ids.',
+            };
+          }
           const message = this.streams.getMessage(id);
           if (!message) {
-            return { ok: false, error: `Message not found: ${id}` };
+            return {
+              ok: false,
+              error: `Message not found: ${id}`,
+              hint: 'The id may be stale or from a previous daemon run. Call message_page with medium "cli" or "discord" to list currently available message ids.',
+            };
           }
           const attachments = readDiscordAttachments(message.metadata);
           return {
@@ -1282,6 +1297,59 @@ function formatCapabilities(capabilities: ModelCapabilities): string {
     capabilities.outputTokens ? `output:${capabilities.outputTokens}` : '',
   ].filter(Boolean);
   return `${enabled.join(', ') || 'none'} (source: ${capabilities.source})`;
+}
+
+function maxOutputTokensForModel(model: ResolvedModel): number {
+  const modelLimit = model.capabilities.outputTokens;
+  if (!modelLimit) {
+    return DEFAULT_MAX_OUTPUT_TOKENS;
+  }
+  return Math.max(1, Math.min(DEFAULT_MAX_OUTPUT_TOKENS, modelLimit));
+}
+
+const repairFlatToolCall: ToolCallRepairFunction<ToolSet> = async ({ toolCall, inputSchema }) => {
+  const schema = await inputSchema({ toolName: toolCall.toolName });
+  const repaired = repairToolInput(toolCall.input, schema);
+  if (!repaired) {
+    return null;
+  }
+  return {
+    ...toolCall,
+    input: JSON.stringify(repaired),
+  };
+};
+
+function repairToolInput(inputText: string, schema: { type?: unknown; required?: unknown; properties?: unknown }): Record<string, unknown> | undefined {
+  const parsed = parseToolInput(inputText);
+  if (parsed === undefined || schema.type !== 'object') {
+    return undefined;
+  }
+
+  if (isRecord(parsed) && isRecord(parsed.params)) {
+    return parsed.params;
+  }
+
+  if (isRecord(parsed)) {
+    return undefined;
+  }
+
+  const required = Array.isArray(schema.required) ? schema.required.filter(item => typeof item === 'string') : [];
+  if (required.length !== 1) {
+    return undefined;
+  }
+  return { [required[0]]: parsed };
+}
+
+function parseToolInput(inputText: string): unknown {
+  const trimmed = inputText.trim();
+  if (!trimmed) {
+    return {};
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
 }
 
 function inferParamCount(text: string): string | undefined {
