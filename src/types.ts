@@ -18,6 +18,7 @@ export type WebApiStreamConfig = {
   name: string;
   url: string;
   headers?: Record<string, string>;
+  intervalMs?: number;
   waking?: boolean;
   subscribed?: boolean;
 };

@@ -6,6 +6,7 @@
     {
       "name": "usgs:earthquakes:all_hour",
       "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
+      "intervalMs": 900000,
       "subscribed": true,
       "waking": false
     }

@@ -15,6 +15,8 @@ export type StreamPopContext = {
   capabilities: ModelCapabilities;
 };
 
+const DEFAULT_WEB_API_INTERVAL_MS = 15 * 60 * 1000;
+
 export interface WatchStream {
   readonly name: string;
   readonly waking: boolean;
@@ -147,12 +149,15 @@ class WebApiStream implements WatchStream {
   readonly sampled = true;
   readonly waking: boolean;
   private lastFingerprint = '';
+  private lastSampleAtMs = 0;
+  private readonly intervalMs: number;
 
   constructor(
     readonly name: string,
     private readonly config: WebApiStreamConfig,
   ) {
     this.waking = config.waking === true;
+    this.intervalMs = validIntervalMs(config.intervalMs);
   }
 
   push(): void {
@@ -164,6 +169,12 @@ class WebApiStream implements WatchStream {
   }
 
   async popDelta({ now }: StreamPopContext): Promise<StreamDelta | undefined> {
+    const nowMs = now.getTime();
+    if (this.lastSampleAtMs && nowMs - this.lastSampleAtMs < this.intervalMs) {
+      return undefined;
+    }
+    this.lastSampleAtMs = nowMs;
+
     const sampledAt = now.toISOString();
     const result = await this.fetchCurrent(sampledAt);
     if (result.fingerprint === this.lastFingerprint) {
@@ -217,6 +228,13 @@ class WebApiStream implements WatchStream {
       };
     }
   }
+}
+
+function validIntervalMs(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return DEFAULT_WEB_API_INTERVAL_MS;
+  }
+  return value;
 }
 
 export class StreamRegistry {
