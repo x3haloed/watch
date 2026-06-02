@@ -162,6 +162,7 @@ export class Lookout {
     options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice } = {},
   ): Promise<{ text: string; toolCallCount: number }> {
     const prompt = this.formatSounding(sounding, model, reroute, rerouteFailure, options.restModelNotice);
+    this.repairMessageHistory();
     this.messages.push({ role: 'user', content: prompt });
     let toolCallCount = 0;
 
@@ -209,6 +210,7 @@ export class Lookout {
         this.pendingCurl = undefined;
       } else {
         this.messages.push(...sanitizeMessagesForHistory(result.response.messages));
+        this.repairMessageHistory();
       }
       return { text: result.text, toolCallCount };
     } catch (error) {
@@ -896,6 +898,14 @@ export class Lookout {
     };
   }
 
+  private repairMessageHistory(): void {
+    const repaired = repairIncompleteToolTurns(this.messages);
+    if (repaired.length !== this.messages.length) {
+      this.messages.length = 0;
+      this.messages.push(...repaired);
+    }
+  }
+
   private async instructions(): Promise<string> {
     const [context, modelRoster, availableSkills] = await Promise.all([
       this.contextPrompt,
@@ -1053,7 +1063,71 @@ function mediaToolOutputToModelOutput(output: unknown): Record<string, unknown> 
 }
 
 function sanitizeMessagesForHistory(messages: ModelMessage[]): ModelMessage[] {
-  return scrubMediaValue(JSON.parse(JSON.stringify(messages))) as ModelMessage[];
+  return repairIncompleteToolTurns(scrubMediaValue(JSON.parse(JSON.stringify(messages))) as ModelMessage[]);
+}
+
+function repairIncompleteToolTurns(messages: ModelMessage[]): ModelMessage[] {
+  const availableResultIds = new Set<string>();
+  const availableCallIds = new Set<string>();
+  for (const message of messages) {
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (!isRecord(part) || typeof part.toolCallId !== 'string') continue;
+      if (message.role === 'assistant' && part.type === 'tool-call') {
+        availableCallIds.add(part.toolCallId);
+      }
+      if (message.role === 'tool' && part.type === 'tool-result') {
+        availableResultIds.add(part.toolCallId);
+      }
+    }
+  }
+
+  const repaired: ModelMessage[] = [];
+  for (const message of messages) {
+    const content = (message as { content?: unknown }).content;
+    if (message.role === 'tool' && Array.isArray(content)) {
+      const missingCallParts = content
+        .filter(part => isRecord(part) && part.type === 'tool-result' && typeof part.toolCallId === 'string' && !availableCallIds.has(part.toolCallId))
+        .map(part => ({
+          type: 'tool-call',
+          toolCallId: (part as { toolCallId: string }).toolCallId,
+          toolName: 'unknown_tool_called',
+          input: { repaired: true, reason: 'tool result was present in history but the matching assistant tool call was missing' },
+        }));
+      if (missingCallParts.length > 0) {
+        repaired.push({ role: 'assistant', content: missingCallParts } as ModelMessage);
+      }
+      repaired.push(message);
+      continue;
+    }
+
+    repaired.push(message);
+    if (message.role !== 'assistant' || !Array.isArray(content)) {
+      continue;
+    }
+
+    const missingResultParts = content
+      .filter(part => isRecord(part) && part.type === 'tool-call' && typeof part.toolCallId === 'string' && !availableResultIds.has(part.toolCallId))
+      .map(part => ({
+        type: 'tool-result',
+        toolCallId: (part as { toolCallId: string }).toolCallId,
+        toolName: typeof (part as { toolName?: unknown }).toolName === 'string' ? (part as { toolName: string }).toolName : 'unknown_tool_called',
+        output: {
+          type: 'json',
+          value: {
+            ok: false,
+            repaired: true,
+            result: 'unknown result',
+            reason: 'assistant tool call was present in history but the matching tool result was missing',
+          },
+        },
+      }));
+    if (missingResultParts.length > 0) {
+      repaired.push({ role: 'tool', content: missingResultParts } as ModelMessage);
+    }
+  }
+  return repaired;
 }
 
 function scrubMediaValue(value: unknown): unknown {
@@ -1096,6 +1170,10 @@ function scrubMediaValue(value: unknown): unknown {
   }
 
   return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, scrubMediaValue(item)]));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 type DiscordAttachmentRef = {
