@@ -300,8 +300,15 @@ export class WatchRuntime {
         noToolSoundings: this.noToolSoundings,
       };
       this.noToolSoundings = 0;
-    } catch {
-      // Keep running on the current model if the configured resting model cannot be loaded.
+    } catch (error) {
+      this.log.append({
+        type: 'model_auto_restore_failed',
+        at: new Date().toISOString(),
+        fromModelId,
+        toModelId: restingModelId,
+        noToolSoundings: this.noToolSoundings,
+        error: errorToJson(error),
+      });
     }
   }
 

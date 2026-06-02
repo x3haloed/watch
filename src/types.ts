@@ -104,6 +104,7 @@ export type WatchEvent =
   | { type: 'model_reroute'; at: string; soundingId: string; fromModelId: string; toModelId: string; params: JsonObject }
   | { type: 'model_reroute_failed'; at: string; soundingId: string; fromModelId: string; toModelId: string; error: JsonObject }
   | { type: 'model_auto_restored'; at: string; fromModelId: string; toModelId: string; noToolSoundings: number }
+  | { type: 'model_auto_restore_failed'; at: string; fromModelId: string; toModelId: string; noToolSoundings: number; error: JsonObject }
   | { type: 'terminal_started'; at: string; soundingId: string; sessionId: string; command: string; cwd: string; background: boolean; pty: boolean }
   | { type: 'terminal_output_delta'; at: string; soundingId: string; sessionId: string; stream: 'stdout' | 'stderr'; text: string }
   | { type: 'terminal_finished'; at: string; soundingId: string; sessionId: string; exitCode: number | null; durationMs: number; output: string; error?: string }

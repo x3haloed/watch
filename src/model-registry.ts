@@ -91,6 +91,10 @@ export class ModelRegistry {
       modelEntries.set(cliModel, inferModelConfig(cliModel));
     }
 
+    if (file.restingModel?.trim() && !modelEntries.has(file.restingModel)) {
+      modelEntries.set(file.restingModel, inferModelConfig(file.restingModel));
+    }
+
     const defaultModel = cliModel || file.defaultModel;
     if (!defaultModel?.trim()) {
       throw new Error('No default model configured. Set defaultModel in watch.config.json or pass --model.');
