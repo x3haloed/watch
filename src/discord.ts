@@ -9,6 +9,7 @@ import {
 } from 'discord.js';
 import { EventLog } from './event-log.js';
 import { StreamRegistry } from './streams.js';
+import { mediaTypeFromFilename, modalityFromMediaType } from './media.js';
 import type { DiscordConfig, JsonObject } from './types.js';
 
 type DiscordAttentionPolicy = {
@@ -288,6 +289,7 @@ export class DiscordBridge {
     const guildId = fullMessage.guildId ?? undefined;
     const threadId = fullMessage.channel?.isThread() ? channelId : undefined;
     const content = fullMessage.content.trim();
+    const attachments = formatDiscordAttachments(fullMessage);
 
     const drop = (reason: string): void => {
       this.log.append({
@@ -303,7 +305,7 @@ export class DiscordBridge {
     if (!author) return drop('missing author');
     if (author.bot) return drop('bot author');
     if (this.botUserId && author.id === this.botUserId) return drop('own message');
-    if (!content) return drop('empty content');
+    if (!content && attachments.length === 0) return drop('empty content');
     if (guildId && this.policy.mutedGuilds.has(guildId)) return drop('muted guild');
     if (this.policy.mutedChannels.has(channelId)) return drop('muted channel');
     if (threadId && this.policy.mutedThreads.has(threadId)) return drop('muted thread');
@@ -316,7 +318,7 @@ export class DiscordBridge {
       medium: 'discord',
       source: 'discord',
       subject: `${formatDiscordPlace(fullMessage)} from ${author.tag}`,
-      message: content,
+      message: content || `[Discord message with ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}]`,
       metadata: {
         discord: {
           reason,
@@ -329,6 +331,7 @@ export class DiscordBridge {
           isDm: isDirectMessage(fullMessage),
           url: fullMessage.url,
           referencedMessageId: fullMessage.reference?.messageId,
+          attachments,
         },
       },
     });
@@ -563,16 +566,38 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
 }
 
 function formatContextMessage(message: Message): JsonObject {
+  const attachments = formatDiscordAttachments(message);
   return {
     id: message.id,
     at: message.createdAt.toISOString(),
     authorId: message.author?.id,
     authorName: message.author?.tag ?? message.author?.username ?? 'unknown',
     content: message.content,
-    attachmentCount: message.attachments.size,
+    attachments,
     referencedMessageId: message.reference?.messageId,
     url: message.url,
   };
+}
+
+function formatDiscordAttachments(message: Message): JsonObject[] {
+  return [...message.attachments.values()].map(attachment => {
+    const mediaType = attachment.contentType ?? mediaTypeFromFilename(attachment.name) ?? 'application/octet-stream';
+    return {
+      id: attachment.id,
+      filename: attachment.name,
+      title: attachment.title,
+      description: attachment.description,
+      mediaType,
+      modality: modalityFromMediaType(mediaType),
+      sizeBytes: attachment.size,
+      width: attachment.width,
+      height: attachment.height,
+      durationSeconds: attachment.duration,
+      url: attachment.url,
+      proxyURL: attachment.proxyURL,
+      hint: `Call open_media with inboxMessageId and attachmentId "${attachment.id}" to attach this media to the model.`,
+    };
+  });
 }
 
 function formatContextText(params: {

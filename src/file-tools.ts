@@ -3,6 +3,7 @@ import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { describeFilesystemMedia, openFilesystemMedia, type OpenedMedia } from './media.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -11,6 +12,18 @@ export class RepoFileTools {
 
   async readFile(path: string, offset = 1, limit = 500): Promise<Record<string, unknown>> {
     const file = this.resolvePath(path);
+    const media = await describeFilesystemMedia(file, this.displayPath(file));
+    if (media) {
+      return {
+        ok: false,
+        error: 'This path is a media file, not UTF-8 text.',
+        media,
+        next_actions: [
+          `Call open_media with path "${this.displayPath(file)}" to attach it to the model, if the active model supports ${media.modality}.`,
+          'If the active model does not support that modality, call handle_with_model with a recommended model from the open_media error.',
+        ],
+      };
+    }
     const content = await readFile(file, 'utf8');
     const lines = content.split(/\r?\n/);
     const start = Math.max(1, Math.floor(offset));
@@ -102,6 +115,16 @@ export class RepoFileTools {
     const updated = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString);
     await writeFile(file, updated, 'utf8');
     return { ok: true, path: this.displayPath(file), resolvedPath: file, cwd: this.cwd, replacements: replaceAll ? count : 1 };
+  }
+
+  async openMedia(path: string): Promise<OpenedMedia> {
+    const file = this.resolvePath(path);
+    return openFilesystemMedia(file, this.displayPath(file));
+  }
+
+  async describeMedia(path: string): Promise<Awaited<ReturnType<typeof describeFilesystemMedia>>> {
+    const file = this.resolvePath(path);
+    return describeFilesystemMedia(file, this.displayPath(file));
   }
 
   private resolvePath(path: string): string {

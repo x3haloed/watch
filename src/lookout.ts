@@ -11,6 +11,15 @@ import { RepoFileTools } from './file-tools.js';
 import { SkillLibrary } from './skills.js';
 import { TerminalTools } from './terminal-tools.js';
 import { DiscordBridge, parseDiscordAttentionScope } from './discord.js';
+import {
+  mediaPlaceholder,
+  modelSupportsMedia,
+  modalityFromMediaType,
+  openUrlMedia,
+  recommendedModelsForMedia,
+  type MediaDescriptor,
+  type OpenedMedia,
+} from './media.js';
 
 export type RestModelNotice = {
   fromModelId: string;
@@ -160,7 +169,7 @@ export class Lookout {
       const agent = new ToolLoopAgent({
         model: this.models.createLanguageModel(model),
         instructions: await this.instructions(),
-        tools: this.createTools(sounding),
+        tools: this.createTools(sounding, model),
         stopWhen: stepCountIs(20),
         onStepFinish: step => {
           toolCallCount += countToolCalls(step);
@@ -220,10 +229,10 @@ export class Lookout {
     }
   }
 
-  private createTools(sounding: Sounding) {
+  private createTools(sounding: Sounding, model: ResolvedModel) {
     return {
       read_file: tool({
-        description: 'Read a UTF-8 text file with line numbers and pagination. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected.',
+        description: 'Read a UTF-8 text file with line numbers and pagination. If the path is media, this returns instructions to use open_media instead. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected.',
         inputSchema: jsonSchema<{ path: string; offset?: number; limit?: number }>({
           type: 'object',
           properties: {
@@ -235,6 +244,24 @@ export class Lookout {
           additionalProperties: false,
         }),
         execute: async ({ path, offset, limit }) => this.fileTools.readFile(path, offset, limit),
+      }),
+      open_media: tool({
+        description:
+          'Attach an image, audio file, video, or PDF to the model. Use path for filesystem media, or inboxMessageId + attachmentId for a Discord attachment. If the active model lacks the needed modality, this returns recommended handle_with_model targets.',
+        inputSchema: jsonSchema<{ path?: string; inboxMessageId?: number; attachmentId?: string; url?: string; mediaType?: string; filename?: string }>({
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Filesystem path to media. Relative paths resolve from cwd; absolute paths are accepted.' },
+            inboxMessageId: { type: 'number', description: 'Discord inbox message ID containing the attachment.' },
+            attachmentId: { type: 'string', description: 'Discord attachment ID from open_message or discord_read_context.' },
+            url: { type: 'string', description: 'Direct media URL. Prefer inboxMessageId + attachmentId for Discord.' },
+            mediaType: { type: 'string', description: 'IANA media type for URL media when known.' },
+            filename: { type: 'string', description: 'Filename for URL media when known.' },
+          },
+          additionalProperties: false,
+        }),
+        execute: async input => this.openMediaForModel(input, model),
+        toModelOutput: (options: { output: unknown }) => mediaToolOutputToModelOutput(options.output) as never,
       }),
       write_file: tool({
         description:
@@ -434,6 +461,7 @@ export class Lookout {
           if (!message) {
             return { ok: false, error: `Message not found: ${id}` };
           }
+          const attachments = readDiscordAttachments(message.metadata);
           return {
             ok: true,
             message: {
@@ -444,9 +472,11 @@ export class Lookout {
               receivedAt: message.receivedAt,
               content: message.content,
               metadata: message.metadata,
+              attachments,
             },
             next_actions: [
               `To reply to this message, call send_message with medium "${message.medium}", replyToId ${message.id}, and your message content.`,
+              ...attachments.map(attachment => `To inspect attachment ${attachment.id} (${attachment.mediaType}), call open_media with inboxMessageId ${message.id} and attachmentId "${attachment.id}".`),
               'If no reply is needed, continue monitoring.',
             ],
           };
@@ -761,6 +791,111 @@ export class Lookout {
     };
   }
 
+  private async openMediaForModel(
+    input: { path?: string; inboxMessageId?: number; attachmentId?: string; url?: string; mediaType?: string; filename?: string },
+    model: ResolvedModel,
+  ): Promise<Record<string, unknown>> {
+    let descriptor: MediaDescriptor | undefined;
+    let open: () => Promise<OpenedMedia>;
+
+    if (input.path?.trim()) {
+      descriptor = await this.fileTools.describeMedia(input.path);
+      if (!descriptor) {
+        return { ok: false, error: `Path is not recognized as supported media: ${input.path}` };
+      }
+      open = () => this.fileTools.openMedia(input.path as string);
+    } else {
+      const attachment = this.resolveMediaAttachment(input);
+      if (!attachment.ok) {
+        return attachment;
+      }
+      descriptor = {
+        source: attachment.source,
+        url: attachment.url,
+        filename: attachment.filename,
+        mediaType: attachment.mediaType,
+        sizeBytes: attachment.sizeBytes,
+        modality: attachment.modality,
+      };
+      open = () =>
+        openUrlMedia({
+          url: attachment.url,
+          filename: attachment.filename,
+          mediaType: attachment.mediaType,
+          sizeBytes: attachment.sizeBytes,
+          source: attachment.source,
+        });
+    }
+
+    if (!modelSupportsMedia(model, descriptor.modality)) {
+      const recommendedModels = await recommendedModelsForMedia(this.models, descriptor.modality);
+      return {
+        ok: false,
+        error: `The active model ${model.id} does not support ${descriptor.modality} input.`,
+        media: descriptor,
+        recommendedModels,
+        next_actions: recommendedModels.length
+          ? [`Call handle_with_model with modelId "${recommendedModels[0]}", then call open_media again.`]
+          : ['No configured model currently advertises support for this modality. Add one to watch.config.json or choose a different media item.'],
+      };
+    }
+
+    const media = await open();
+    return {
+      ok: true,
+      media,
+      text: mediaPlaceholder(media),
+    };
+  }
+
+  private resolveMediaAttachment(input: {
+    inboxMessageId?: number;
+    attachmentId?: string;
+    url?: string;
+    mediaType?: string;
+    filename?: string;
+  }):
+    | { ok: true; source: 'discord' | 'url'; url: string; filename?: string; mediaType: string; sizeBytes?: number; modality: OpenedMedia['modality'] }
+    | { ok: false; error: string } {
+    if (input.url?.trim()) {
+      const mediaType = input.mediaType?.trim();
+      if (!mediaType) {
+        return { ok: false, error: 'URL media requires mediaType.' };
+      }
+      return {
+        ok: true,
+        source: 'url',
+        url: input.url.trim(),
+        filename: input.filename?.trim() || undefined,
+        mediaType,
+        modality: modalityFromMediaType(mediaType),
+      };
+    }
+
+    if (input.inboxMessageId === undefined) {
+      return { ok: false, error: 'Provide path, url, or inboxMessageId + attachmentId.' };
+    }
+    const attachmentId = input.attachmentId?.trim();
+    if (!attachmentId) {
+      return { ok: false, error: 'Discord media requires attachmentId.' };
+    }
+    const stored = this.streams.getMessage(input.inboxMessageId);
+    const attachments = readDiscordAttachments(stored?.metadata);
+    const attachment = attachments.find(item => item.id === attachmentId);
+    if (!attachment) {
+      return { ok: false, error: `Attachment ${attachmentId} was not found on inbox message ${input.inboxMessageId}.` };
+    }
+    return {
+      ok: true,
+      source: 'discord',
+      url: attachment.url,
+      filename: attachment.filename,
+      mediaType: attachment.mediaType,
+      sizeBytes: attachment.sizeBytes,
+      modality: attachment.modality,
+    };
+  }
+
   private async instructions(): Promise<string> {
     const [context, modelRoster, availableSkills] = await Promise.all([
       this.contextPrompt,
@@ -884,10 +1019,12 @@ const LOOKOUT_INSTRUCTIONS = `You are the Lookout inside Watch.
 Watch is a continuous agent harness. You do not wait for user prompts; you receive Soundings from the CFF loop.
 Treat incoming user messages as inbox deltas, not commands that automatically define your next action.
 Inbox deltas are indexes, not full messages. When an inbox entry says to call open_message with an ID, call open_message to read it.
+Discord messages may include attachments. open_message will list attachment IDs; call open_media with inboxMessageId and attachmentId to attach media to the model.
 Only send_message creates human-visible speech. Your final assistant text is private working speech and is not delivered to the user.
 Use subscribe_stream and unsubscribe_stream to control your gaze.
 Use discord_attention, discord_mute, discord_unmute, discord_watch, and discord_unwatch to control Discord-specific inbound attention.
 Use discord_read_context when a Discord inbox message needs surrounding thread/channel context; prefer inboxMessageId and follow the returned older/newer continuation args.
+Use open_media for images, audio, video, PDFs, or other media. If read_file says a path is media, follow its open_media hint. If open_media says the active model does not support that modality, call handle_with_model with one of the recommended model IDs before trying again.
 Use curl when the current session should be preserved in the ledger and context should be cleared for a fresh re-entry.
 Use handle_with_model when the current Sounding calls for a larger model, stronger reasoning, or different modalities than the active model has.
 Use terminal for builds, tests, package managers, git, scripts, long-running processes, and network checks. Prefer filesystem tools for file reads, searches, writes, and patches. Use terminal background sessions only for servers or watchers that keep running.
@@ -897,8 +1034,103 @@ function formatLedgerEntry(entry: string): string {
   return `\n\n---\n\n[curl]\nat: ${new Date().toISOString()}\n[/curl]\n\n${entry}\n`;
 }
 
+function mediaToolOutputToModelOutput(output: unknown): Record<string, unknown> {
+  const result = output as { ok?: unknown; media?: Partial<OpenedMedia>; text?: unknown };
+  if (result.ok === true && result.media?.dataBase64 && result.media.mediaType) {
+    return {
+      type: 'content',
+      value: [
+        { type: 'text', text: typeof result.text === 'string' ? result.text : mediaPlaceholder(result.media as MediaDescriptor) },
+        {
+          type: 'media',
+          data: result.media.dataBase64,
+          mediaType: result.media.mediaType,
+        },
+      ],
+    };
+  }
+  return { type: 'json', value: scrubMediaValue(output) };
+}
+
 function sanitizeMessagesForHistory(messages: ModelMessage[]): ModelMessage[] {
-  return JSON.parse(JSON.stringify(messages)) as ModelMessage[];
+  return scrubMediaValue(JSON.parse(JSON.stringify(messages))) as ModelMessage[];
+}
+
+function scrubMediaValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(item => scrubMediaValue(item));
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (record.type === 'media' || record.type === 'image-data' || record.type === 'file-data') {
+    return {
+      type: 'text',
+      text: mediaPlaceholder({
+        source: 'url',
+        mediaType: typeof record.mediaType === 'string' ? record.mediaType : 'application/octet-stream',
+        modality: typeof record.mediaType === 'string' ? modalityFromMediaType(record.mediaType) : 'file',
+      }),
+    };
+  }
+  if (record.type === 'image-url' || record.type === 'file-url') {
+    return {
+      type: 'text',
+      text: `[media URL previously attached: ${typeof record.url === 'string' ? record.url : 'unknown URL'}]`,
+    };
+  }
+  if ('dataBase64' in record) {
+    const { dataBase64: _dataBase64, ...rest } = record;
+    return {
+      ...Object.fromEntries(Object.entries(rest).map(([key, item]) => [key, scrubMediaValue(item)])),
+      placeholder: mediaPlaceholder({
+        source: 'url',
+        filename: typeof record.filename === 'string' ? record.filename : undefined,
+        mediaType: typeof record.mediaType === 'string' ? record.mediaType : 'application/octet-stream',
+        sizeBytes: typeof record.sizeBytes === 'number' ? record.sizeBytes : undefined,
+        modality: typeof record.modality === 'string' ? (record.modality as MediaDescriptor['modality']) : 'file',
+      }),
+    };
+  }
+
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, scrubMediaValue(item)]));
+}
+
+type DiscordAttachmentRef = {
+  id: string;
+  url: string;
+  filename?: string;
+  mediaType: string;
+  sizeBytes?: number;
+  modality: OpenedMedia['modality'];
+};
+
+function readDiscordAttachments(metadata: unknown): DiscordAttachmentRef[] {
+  if (!metadata || typeof metadata !== 'object') return [];
+  const discord = (metadata as { discord?: unknown }).discord;
+  if (!discord || typeof discord !== 'object') return [];
+  const attachments = (discord as { attachments?: unknown }).attachments;
+  if (!Array.isArray(attachments)) return [];
+  return attachments.flatMap(item => {
+    if (!item || typeof item !== 'object') return [];
+    const record = item as Record<string, unknown>;
+    const id = typeof record.id === 'string' ? record.id : undefined;
+    const url = typeof record.url === 'string' ? record.url : undefined;
+    const mediaType = typeof record.mediaType === 'string' ? record.mediaType : undefined;
+    if (!id || !url || !mediaType) return [];
+    return [
+      {
+        id,
+        url,
+        filename: typeof record.filename === 'string' ? record.filename : undefined,
+        mediaType,
+        sizeBytes: typeof record.sizeBytes === 'number' ? record.sizeBytes : undefined,
+        modality: modalityFromMediaType(mediaType),
+      },
+    ];
+  });
 }
 
 function parseWatchableDiscordScope(
