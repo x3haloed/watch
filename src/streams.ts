@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { JsonObject, ModelCapabilities, StreamDelta, WebApiStreamConfig } from './types.js';
 
 export type StoredMessage = {
@@ -16,6 +19,7 @@ export type StreamPopContext = {
 };
 
 const DEFAULT_WEB_API_INTERVAL_MS = 15 * 60 * 1000;
+const DEFAULT_TEXT_STREAM_CHARS = 4000;
 
 export interface WatchStream {
   readonly name: string;
@@ -230,6 +234,73 @@ class WebApiStream implements WatchStream {
   }
 }
 
+class TextFileStream implements WatchStream {
+  readonly waking = false;
+  private nextChar: number;
+
+  constructor(
+    readonly name: string,
+    private readonly file: string,
+    private readonly displayPath: string,
+    private readonly content: string,
+    private readonly charsPerSounding: number,
+    startChar: number,
+  ) {
+    this.nextChar = clampChar(startChar, content.length);
+  }
+
+  push(): void {
+    // Text file streams advance only when sampled into a Sounding.
+  }
+
+  hasDelta(): boolean {
+    return this.nextChar < this.content.length;
+  }
+
+  popDelta({ now }: StreamPopContext): StreamDelta | undefined {
+    const chunk = this.readChunk();
+    if (!chunk) {
+      return undefined;
+    }
+    return {
+      stream: this.name,
+      at: now.toISOString(),
+      payload: chunk,
+    };
+  }
+
+  readChunk(): JsonObject | undefined {
+    if (!this.hasDelta()) {
+      return undefined;
+    }
+    const startChar = this.nextChar;
+    const endChar = Math.min(this.content.length, startChar + this.charsPerSounding);
+    const chunk = this.content.slice(startChar, endChar);
+    this.nextChar = endChar;
+    const done = this.nextChar >= this.content.length;
+    return {
+      kind: 'text_file_chunk',
+      stream: this.name,
+      file: this.displayPath,
+      filename: basename(this.file),
+      totalChars: this.content.length,
+      charsPerSounding: this.charsPerSounding,
+      startChar,
+      endChar,
+      nextChar: this.nextChar,
+      done,
+      chunk,
+      hint: done
+        ? 'Text stream reached EOF and will be removed from gaze.'
+        : `Next Sounding will include chars ${this.nextChar}-${Math.min(this.content.length, this.nextChar + this.charsPerSounding)}. Call text_stream_close or unsubscribe_stream to stop.`,
+    };
+  }
+
+  isDone(): boolean {
+    return !this.hasDelta();
+  }
+}
+
 function validIntervalMs(value: number | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     return DEFAULT_WEB_API_INTERVAL_MS;
@@ -237,12 +308,26 @@ function validIntervalMs(value: number | undefined): number {
   return value;
 }
 
+function validCharsPerSounding(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return DEFAULT_TEXT_STREAM_CHARS;
+  }
+  return Math.max(1, Math.min(100_000, Math.floor(value)));
+}
+
+function clampChar(value: number, totalChars: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(totalChars, Math.floor(value)));
+}
+
 export class StreamRegistry {
   private readonly messages = new MessageStore();
   private readonly streams = new Map<string, WatchStream>();
   private readonly subscriptions = new Set<string>();
 
-  constructor(webApiStreams: WebApiStreamConfig[] = []) {
+  constructor(webApiStreams: WebApiStreamConfig[] = [], private readonly cwd = process.cwd()) {
     this.streams.set('clock', new ClockStream());
     this.streams.set('inbox', new InboxStream(this.messages));
     this.subscriptions.add('clock');
@@ -271,6 +356,62 @@ export class StreamRegistry {
       return false;
     }
     return this.subscriptions.delete(stream);
+  }
+
+  async openTextFileStream(input: {
+    path: string;
+    charsPerSounding?: number;
+    resumeAtChar?: number;
+  }): Promise<Record<string, unknown>> {
+    const file = this.resolvePath(input.path);
+    const content = await readFile(file, 'utf8');
+    const charsPerSounding = validCharsPerSounding(input.charsPerSounding);
+    const startChar = clampChar(input.resumeAtChar ?? 0, content.length);
+    const stream = new TextFileStream(
+      `text:${basename(file)}:${randomUUID().slice(0, 8)}`,
+      file,
+      this.displayPath(file),
+      content,
+      charsPerSounding,
+      startChar,
+    );
+    const firstChunk = stream.readChunk();
+    this.streams.set(stream.name, stream);
+    if (!stream.isDone()) {
+      this.subscriptions.add(stream.name);
+    }
+    return {
+      ok: true,
+      stream: stream.name,
+      file: this.displayPath(file),
+      filename: basename(file),
+      totalChars: content.length,
+      charsPerSounding,
+      startChar,
+      subscribed: !stream.isDone(),
+      message: `text stream for file ${basename(file)} successful. total of ${content.length} chars. ${charsPerSounding} chars per sounding. First chapter starts now:`,
+      text: `text stream for file ${basename(file)} successful. total of ${content.length} chars. ${charsPerSounding} chars per sounding. First chapter starts now:\n\n${typeof firstChunk?.chunk === 'string' ? firstChunk.chunk : ''}`,
+      firstChunk,
+      next_actions: stream.isDone()
+        ? ['Text stream reached EOF in the first chunk. Call text_stream_open with resumeAtChar to reread from another position.']
+        : [`Future Soundings will include the next chunk. Call text_stream_close with stream "${stream.name}" to stop.`],
+    };
+  }
+
+  closeTextFileStream(stream: string): Record<string, unknown> {
+    const existing = this.streams.get(stream);
+    const existed = existing instanceof TextFileStream;
+    const unsubscribed = this.unsubscribe(stream);
+    if (existed) {
+      this.streams.delete(stream);
+    }
+    return {
+      ok: true,
+      stream,
+      closed: existed,
+      unsubscribed,
+      subscriptions: this.listSubscriptions(),
+    };
   }
 
   isSubscribed(stream: string): boolean {
@@ -313,6 +454,10 @@ export class StreamRegistry {
       if (delta) {
         deltas.push(delta);
       }
+      if (stream instanceof TextFileStream && stream.isDone()) {
+        this.subscriptions.delete(stream.name);
+        this.streams.delete(stream.name);
+      }
     }
     return deltas;
   }
@@ -331,6 +476,19 @@ export class StreamRegistry {
 
   listMessages(medium: string, page = 1, pageSize = 10): { entries: MessageEntry[]; page: number; pageSize: number; total: number; totalPages: number } {
     return this.messages.list(medium, page, pageSize);
+  }
+
+  private resolvePath(path: string): string {
+    if (hasParentTraversal(path)) {
+      throw new Error(`Refusing path with parent traversal (..): ${path}. cwd=${this.cwd}`);
+    }
+    return isAbsolute(path) ? resolve(path) : resolve(this.cwd, path);
+  }
+
+  private displayPath(path: string): string {
+    const rel = relative(resolve(this.cwd), path);
+    if (!rel) return '.';
+    return rel.startsWith('..') ? path : rel;
   }
 }
 
@@ -406,6 +564,10 @@ function parseJson(text: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+function hasParentTraversal(path: string): boolean {
+  return path.split(/[\\/]+/).includes('..');
 }
 
 function deliveryModeFor(stream: string, capabilities: ModelCapabilities): string {

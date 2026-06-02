@@ -26,7 +26,7 @@ export class WatchRuntime {
   private pendingRestModelNotice: RestModelNotice | undefined;
 
   constructor(private readonly config: WatchConfig) {
-    this.streams = new StreamRegistry(config.webApiStreams);
+    this.streams = new StreamRegistry(config.webApiStreams, config.repoRoot);
     this.log = new EventLog(config.repoRoot);
     this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
     this.discord = new DiscordBridge(config.discord, this.streams, this.log);

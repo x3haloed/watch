@@ -710,6 +710,51 @@ export class Lookout {
           return { ok: true, changed, subscriptions: this.streams.listSubscriptions() };
         },
       }),
+      text_stream_open: tool({
+        description:
+          'Begin reading a UTF-8 text file as a gaze stream. Returns the first chunk immediately, then future Soundings include the next chunk until EOF or text_stream_close/unsubscribe_stream.',
+        inputSchema: jsonSchema<{ path: string; charsPerSounding?: number; resumeAtChar?: number }>({
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Text file path. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected.' },
+            charsPerSounding: { type: 'number', description: 'Optional number of characters to include in each Sounding. Defaults to 4000, max 100000.' },
+            resumeAtChar: { type: 'number', description: 'Optional zero-based character offset to start/resume from. Defaults to 0.' },
+          },
+          required: ['path'],
+          additionalProperties: false,
+        }),
+        execute: async ({ path, charsPerSounding, resumeAtChar }) => {
+          const result = await this.streams.openTextFileStream({ path, charsPerSounding, resumeAtChar });
+          this.log.append({
+            type: 'subscription_changed',
+            at: new Date().toISOString(),
+            stream: String(result.stream ?? 'text-stream'),
+            subscribed: Boolean(result.subscribed),
+          });
+          return result;
+        },
+      }),
+      text_stream_close: tool({
+        description: 'Stop and remove a text file gaze stream created by text_stream_open.',
+        inputSchema: jsonSchema<{ stream: string }>({
+          type: 'object',
+          properties: {
+            stream: { type: 'string', description: 'Stream name returned by text_stream_open.' },
+          },
+          required: ['stream'],
+          additionalProperties: false,
+        }),
+        execute: async ({ stream }) => {
+          const result = this.streams.closeTextFileStream(stream);
+          this.log.append({
+            type: 'subscription_changed',
+            at: new Date().toISOString(),
+            stream,
+            subscribed: false,
+          });
+          return result;
+        },
+      }),
       handle_with_model: tool({
         description:
           'Provisionally rerun the current Sounding on another model. Watch commits the new active model only if that model completes the Sounding successfully.',
@@ -1032,6 +1077,7 @@ Inbox deltas are indexes, not full messages. When an inbox entry says to call op
 Discord messages may include attachments. open_message will list attachment IDs; call open_media with inboxMessageId and attachmentId to attach media to the model.
 Only send_message creates human-visible speech. Your final assistant text is private working speech and is not delivered to the user.
 Use subscribe_stream and unsubscribe_stream to control your gaze.
+Use text_stream_open to put a UTF-8 text file into your gaze as a chunked stream; it returns the first chunk immediately and future Soundings include subsequent chunks. Use text_stream_close or unsubscribe_stream to stop. Reopen with resumeAtChar to resume later.
 Use discord_attention, discord_mute, discord_unmute, discord_watch, and discord_unwatch to control Discord-specific inbound attention.
 Use discord_read_context when a Discord inbox message needs surrounding thread/channel context; prefer inboxMessageId and follow the returned older/newer continuation args.
 Use open_media for images, audio, video, PDFs, or other media. If read_file says a path is media, follow its open_media hint. If open_media says the active model does not support that modality, call handle_with_model with one of the recommended model IDs before trying again.
