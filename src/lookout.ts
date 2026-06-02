@@ -29,6 +29,20 @@ export type RestModelNotice = {
   noToolSoundings: number;
 };
 
+export type ContextFit = {
+  ok: boolean;
+  usedTokensEstimate: number;
+  maxOutputTokens: number;
+  requiredTokensEstimate: number;
+  limitTokens: number | null;
+  ratio: number | null;
+  recommendation?: string;
+};
+
+export type RestModelBlockedNotice = RestModelNotice & {
+  context: ContextFit;
+};
+
 export class ModelReroute extends Error {
   constructor(readonly toModelId: string, readonly model: ResolvedModel, readonly params: Record<string, unknown>) {
     super(`Reroute current Sounding to ${toModelId}`);
@@ -44,6 +58,7 @@ export class Lookout {
   private readonly cwd: string;
   private pendingReroute: { modelId: string; model: ResolvedModel; params: Record<string, unknown> } | undefined;
   private pendingCurl: { clearedMessages: number; ledgerPath?: string; wroteLedger: boolean } | undefined;
+  private disclosedContextThreshold = 0;
 
   constructor(
     private readonly streams: StreamRegistry,
@@ -67,9 +82,19 @@ export class Lookout {
     return this.models.activeId;
   }
 
+  async contextFitFor(model: ResolvedModel): Promise<ContextFit> {
+    const instructions = await this.instructions();
+    return contextFitForModel(model, estimateTokensRough(
+      JSON.stringify({
+        instructions,
+        messages: this.messages,
+      }),
+    ));
+  }
+
   async receive(
     sounding: Sounding,
-    options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice } = {},
+    options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice; restModelBlockedNotice?: RestModelBlockedNotice } = {},
   ): Promise<{ text: string; toolCallCount: number }> {
     const missingKey = requiredApiKeyEnv(sounding.model);
     if (this.noModel || missingKey) {
@@ -161,9 +186,9 @@ export class Lookout {
     model: ResolvedModel,
     reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
     rerouteFailure?: { fromModelId: string; toModelId: string; error: Record<string, unknown> },
-    options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice } = {},
+    options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice; restModelBlockedNotice?: RestModelBlockedNotice } = {},
   ): Promise<{ text: string; toolCallCount: number }> {
-    const prompt = this.formatSounding(sounding, model, reroute, rerouteFailure, options.restModelNotice);
+    const prompt = this.formatSounding(sounding, model, reroute, rerouteFailure, options.restModelNotice, options.restModelBlockedNotice);
     this.repairMessageHistory();
     this.messages.push({ role: 'user', content: prompt });
     let toolCallCount = 0;
@@ -357,6 +382,7 @@ export class Lookout {
 
           const clearedMessages = this.messages.length;
           this.messages.length = 0;
+          this.disclosedContextThreshold = 0;
           this.pendingCurl = { clearedMessages, ledgerPath: resolvedLedgerPath, wroteLedger };
           this.log.append({
             type: 'curl',
@@ -794,6 +820,19 @@ export class Lookout {
             if (!model.capabilities.tools) {
               return { ok: false, error: `Model ${modelId} is not supported by Watch because tool_call is false or unknown.` };
             }
+            const fit = await this.contextFitFor(model);
+            if (!fit.ok) {
+              return {
+                ok: false,
+                error: `Cannot hand this Sounding to ${modelId}: its context window is too small for the current Watch session.`,
+                context: fit,
+                why: `Watch estimates ${fit.usedTokensEstimate} context tokens plus ${fit.maxOutputTokens} reserved output tokens, requiring about ${fit.requiredTokensEstimate} tokens. ${modelId} reports a ${fit.limitTokens} token context window.`,
+                options: [
+                  'Call curl with a ledgerEntry to preserve what matters and clear the current session history.',
+                  'Choose a model with a larger context window.',
+                ],
+              };
+            }
           } catch (error) {
             return { ok: false, error: error instanceof Error ? error.message : String(error) };
           }
@@ -817,15 +856,12 @@ export class Lookout {
           ]);
           return {
             ok: true,
-            context: {
-              usedTokensEstimate: estimateTokensRough(
-                JSON.stringify({
-                  instructions,
-                  messages: this.messages,
-                }),
-              ),
-              limitTokens: activeModel.capabilities.contextTokens ?? null,
-            },
+            context: contextFitForModel(activeModel, estimateTokensRough(
+              JSON.stringify({
+                instructions,
+                messages: this.messages,
+              }),
+            )),
             model: {
               current: activeModel.id,
               allAvailable,
@@ -996,7 +1032,7 @@ export class Lookout {
 
     return `[model_roster]
 resting_model: ${this.restingModelId ?? '(none configured)'}
-active_model_restore_policy: Watch may silently restore the resting model after ${this.restAfterNoToolSoundings} Soundings without tool calls.
+active_model_restore_policy: Watch may restore the resting model after ${this.restAfterNoToolSoundings} Soundings without tool calls. If the resting model cannot fit the current context, Watch will keep the current model and disclose the blocked restore with curl as an option.
 reroute_instruction: If the current Sounding asks for work that exceeds the active model's reasoning strength, parameter scale, or modality support, call handle_with_model immediately with the best model ID. Do not try to solve the request first. The same Sounding will be replayed to the selected model with a note that you chose the reroute.
 ${lines.join('\n')}
 [/model_roster]`;
@@ -1026,6 +1062,7 @@ ${lines.join('\n')}
     reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
     rerouteFailure?: { fromModelId: string; toModelId: string; error: Record<string, unknown> },
     restModelNotice?: RestModelNotice,
+    restModelBlockedNotice?: RestModelBlockedNotice,
   ): string {
     const deltas = sounding.deltas
       .map(delta => `${delta.stream}: ${JSON.stringify(delta.payload)} @ ${delta.at}`)
@@ -1063,6 +1100,18 @@ You may continue monitoring, respond if needed, or reroute with handle_with_mode
 [/model_restored]
 `
       : '';
+    const restModelBlockedFrame = restModelBlockedNotice
+      ? `
+[model_restore_blocked]
+Watch tried to restore the configured resting model after ${restModelBlockedNotice.noToolSoundings} consecutive Soundings without tool calls, but did not switch models because the resting model's context window is too small for the current session.
+from_model: ${restModelBlockedNotice.fromModelId}
+attempted_to_model: ${restModelBlockedNotice.toModelId}
+context: ${JSON.stringify(restModelBlockedNotice.context)}
+This is a disclosure, not a punishment. You can continue on the current model, choose a larger model with handle_with_model, or call curl with a ledgerEntry to preserve what matters and clear session history before returning to the resting model.
+[/model_restore_blocked]
+`
+      : '';
+    const contextPressureFrame = this.contextDisclosureFrame(model, sounding);
 
     return `[cff_system]
 sounding_id: ${sounding.id}
@@ -1077,11 +1126,35 @@ available-models:
 ${this.models.listModelIds().map(id => `- ${id}`).join('\n')}
 subscriptions:
 ${this.streams.listSubscriptions().map(stream => `- ${stream}`).join('\n')}
-[/cff_system]
+[/cff_system]${contextPressureFrame}
 
 [deltas]
 ${deltas || '(none)'}
-[/deltas]${restModelFrame}${rerouteFrame}${rerouteFailureFrame}`;
+[/deltas]${restModelFrame}${restModelBlockedFrame}${rerouteFrame}${rerouteFailureFrame}`;
+  }
+
+  private contextDisclosureFrame(model: ResolvedModel, sounding: Sounding): string {
+    const fit = contextFitForModel(model, estimateTokensRough(JSON.stringify({ messages: this.messages, prompt: sounding })));
+    const crossed = crossedContextThreshold(fit.ratio, this.disclosedContextThreshold);
+    if (fit.ratio !== null && fit.ratio < this.disclosedContextThreshold) {
+      this.disclosedContextThreshold = highestContextThresholdAtOrBelow(fit.ratio);
+    }
+    if (!crossed) {
+      return '';
+    }
+
+    this.disclosedContextThreshold = crossed;
+    return `
+[context_pressure]
+current_context_ratio: ${formatPercent(fit.ratio)}
+threshold_crossed: ${formatPercent(crossed)}
+used_tokens_estimate: ${fit.usedTokensEstimate}
+required_tokens_estimate: ${fit.requiredTokensEstimate}
+active_model_limit_tokens: ${fit.limitTokens ?? 'unknown'}
+${fit.recommendation ? `recommendation: ${fit.recommendation}` : 'recommendation: Context is growing. Keep curl available before the session becomes too heavy.'}
+curl_available: Call curl with a ledgerEntry to preserve what matters and clear the current session history.
+[/context_pressure]
+`;
   }
 }
 
@@ -1305,6 +1378,76 @@ function maxOutputTokensForModel(model: ResolvedModel): number {
     return DEFAULT_MAX_OUTPUT_TOKENS;
   }
   return Math.max(1, Math.min(DEFAULT_MAX_OUTPUT_TOKENS, modelLimit));
+}
+
+function contextFitForModel(model: ResolvedModel, usedTokensEstimate: number): ContextFit {
+  const maxOutputTokens = maxOutputTokensForModel(model);
+  const requiredTokensEstimate = usedTokensEstimate + maxOutputTokens;
+  const limitTokens = model.capabilities.contextTokens ?? null;
+  const ratio = limitTokens ? requiredTokensEstimate / limitTokens : null;
+  const recommendation = contextRecommendation(ratio);
+  return {
+    ok: limitTokens === null || requiredTokensEstimate <= limitTokens,
+    usedTokensEstimate,
+    maxOutputTokens,
+    requiredTokensEstimate,
+    limitTokens,
+    ratio,
+    ...(recommendation ? { recommendation } : {}),
+  };
+}
+
+function contextRecommendation(ratio: number | null): string | undefined {
+  if (ratio === null) {
+    return 'Context limit is unknown for this model. Use session_dashboard and curl if the session feels heavy.';
+  }
+  if (ratio >= 0.95) {
+    return 'Context is critically full. Consider calling curl now with a ledgerEntry before more work accumulates.';
+  }
+  if (ratio >= 0.8) {
+    return 'Context is getting heavy. Consider preparing a ledgerEntry and calling curl soon.';
+  }
+  if (ratio >= 0.6) {
+    return 'Context is moderately loaded. Keep curl in mind if new work becomes detailed or emotionally load-bearing.';
+  }
+  return undefined;
+}
+
+function crossedContextThreshold(ratio: number | null, previous: number): number | undefined {
+  if (ratio === null) {
+    return undefined;
+  }
+  const threshold = contextThresholdAtOrBelow(ratio);
+  return threshold > previous ? threshold : undefined;
+}
+
+function highestContextThresholdAtOrBelow(ratio: number): number {
+  return contextThresholdAtOrBelow(ratio);
+}
+
+function contextThresholdAtOrBelow(ratio: number): number {
+  if (ratio < 0.1) {
+    return 0;
+  }
+  const step = contextThresholdStep(ratio);
+  return roundThreshold(Math.floor((ratio + Number.EPSILON * 100) / step) * step);
+}
+
+function contextThresholdStep(ratio: number): number {
+  if (ratio < 0.3) return 0.1;
+  if (ratio < 0.5) return 0.05;
+  if (ratio < 0.7) return 1 / 30;
+  if (ratio < 0.85) return 0.025;
+  if (ratio < 0.95) return 0.01;
+  return 0.005;
+}
+
+function roundThreshold(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+function formatPercent(ratio: number | null): string {
+  return ratio === null ? 'unknown' : `${(ratio * 100).toFixed(1)}%`;
 }
 
 const repairFlatToolCall: ToolCallRepairFunction<ToolSet> = async ({ toolCall, inputSchema }) => {

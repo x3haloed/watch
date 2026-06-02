@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ControlRequest, ControlResponse, Sounding, WatchConfig } from './types.js';
 import { EventLog } from './event-log.js';
-import { Lookout, type RestModelNotice } from './lookout.js';
+import { Lookout, type RestModelBlockedNotice, type RestModelNotice } from './lookout.js';
 import { StreamRegistry } from './streams.js';
 import { ModelRegistry } from './model-registry.js';
 import { DiscordBridge } from './discord.js';
@@ -24,6 +24,7 @@ export class WatchRuntime {
   private noToolSoundings = 0;
   private readonly restingModelId: string | undefined;
   private pendingRestModelNotice: RestModelNotice | undefined;
+  private pendingRestModelBlockedNotice: RestModelBlockedNotice | undefined;
 
   constructor(private readonly config: WatchConfig) {
     this.streams = new StreamRegistry(config.webApiStreams, config.repoRoot);
@@ -223,10 +224,12 @@ export class WatchRuntime {
         try {
           this.activeAbortController = new AbortController();
           const restModelNotice = this.consumeRestModelNotice(model.id);
+          const restModelBlockedNotice = this.consumeRestModelBlockedNotice();
           const result = await this.lookout.receive(sounding, {
             abortSignal: this.activeAbortController.signal,
             timeoutMs: this.config.modelTimeoutMs,
             restModelNotice,
+            restModelBlockedNotice,
           });
           await this.recordToolActivity(result.toolCallCount);
           this.log.append({
@@ -286,6 +289,26 @@ export class WatchRuntime {
 
     const fromModelId = this.lookout.modelId;
     try {
+      const restingModel = await this.models.resolve(restingModelId);
+      const context = await this.lookout.contextFitFor(restingModel);
+      if (!context.ok) {
+        this.log.append({
+          type: 'model_auto_restore_blocked',
+          at: new Date().toISOString(),
+          fromModelId,
+          toModelId: restingModelId,
+          noToolSoundings: this.noToolSoundings,
+          context,
+        });
+        this.pendingRestModelBlockedNotice = {
+          fromModelId,
+          toModelId: restingModelId,
+          noToolSoundings: this.noToolSoundings,
+          context,
+        };
+        return;
+      }
+
       await this.models.switchTo(restingModelId);
       this.log.append({
         type: 'model_auto_restored',
@@ -319,6 +342,12 @@ export class WatchRuntime {
 
     const notice = this.pendingRestModelNotice;
     this.pendingRestModelNotice = undefined;
+    return notice;
+  }
+
+  private consumeRestModelBlockedNotice(): RestModelBlockedNotice | undefined {
+    const notice = this.pendingRestModelBlockedNotice;
+    this.pendingRestModelBlockedNotice = undefined;
     return notice;
   }
 }
