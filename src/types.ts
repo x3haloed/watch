@@ -8,6 +8,7 @@ export type WatchConfig = {
   defaultModel: string;
   availableModels: string[];
   webApiStreams: WebApiStreamConfig[];
+  ledgerPath?: string;
   discord?: DiscordConfig;
   restingModel?: string;
   restAfterNoToolSoundings: number;
@@ -118,6 +119,7 @@ export type WatchEvent =
   | { type: 'discord_attention_changed'; at: string; action: string; scope: JsonObject; policy: JsonObject }
   | { type: 'discord_error'; at: string; error: JsonObject }
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }
+  | { type: 'curl'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number }
   | { type: 'model_skipped'; at: string; soundingId: string; reason: string };
 
 export type ControlRequest =

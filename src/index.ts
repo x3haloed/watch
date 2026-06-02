@@ -10,6 +10,7 @@ import type { WatchConfig, WebApiStreamConfig } from './types.js';
 type WatchConfigFile = {
   defaultModel?: string;
   restingModel?: string;
+  ledgerPath?: string;
   minCffMs?: number;
   maxCffMs?: number;
   webApiStreams?: WebApiStreamConfig[];
@@ -134,6 +135,7 @@ function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
     maxCffMs: numberFlag(args, '--max-cff-ms') ?? file.maxCffMs ?? 30_000,
     modelTimeoutMs: numberFlag(args, '--model-timeout-ms') ?? 120_000,
     defaultModel,
+    ledgerPath: file.ledgerPath,
     webApiStreams: Array.isArray(file.webApiStreams) ? file.webApiStreams : [],
     discord: file.discord,
     restingModel: stringFlag(args, '--resting-model') ?? file.restingModel ?? file.defaultModel ?? defaultModel,

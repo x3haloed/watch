@@ -1,5 +1,5 @@
 import blessed from 'blessed';
-import { existsSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
 import { eventLogPath } from './paths.js';
 import { sendControl } from './client.js';
 import type { ControlResponse } from './types.js';
@@ -216,17 +216,35 @@ function renderToolTrace(events: EventRecord[]): string {
 function readEvents(repoRoot: string): EventRecord[] {
   const path = eventLogPath(repoRoot);
   if (!existsSync(path)) return [];
-  return readFileSync(path, 'utf8')
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map(line => {
-      try {
-        return JSON.parse(line) as EventRecord;
-      } catch {
-        return { type: 'parse_error', line };
-      }
-    });
+
+  const stat = statSync(path);
+  if (stat.size === 0) return [];
+
+  // Read the last ~1MB from the end — the TUI only needs recent events.
+  // Avoids V8's 0x1fffffe8 character string limit on the full event log.
+  const maxRead = 1024 * 1024;
+  const readSize = Math.min(maxRead, stat.size);
+  const buffer = Buffer.alloc(readSize);
+
+  const fd = openSync(path, 'r');
+  try {
+    readSync(fd, buffer, 0, readSize, stat.size - readSize);
+    const text = buffer.toString('utf8');
+    const lines = text.split('\n');
+    // If we didn't read from byte 0, the first line may be a partial fragment
+    const validLines = readSize < stat.size ? lines.slice(1) : lines;
+    return validLines
+      .filter(line => line.trim().length > 0)
+      .map(line => {
+        try {
+          return JSON.parse(line) as EventRecord;
+        } catch {
+          return { type: 'parse_error', line } as EventRecord;
+        }
+      });
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function currentDaemonEvents(events: EventRecord[]): EventRecord[] {

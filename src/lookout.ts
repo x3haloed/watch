@@ -1,5 +1,7 @@
 import { ToolLoopAgent, jsonSchema, stepCountIs, tool } from 'ai';
 import type { ModelMessage } from 'ai';
+import { appendFile, mkdir } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import type { ModelCapabilities, ResolvedModel, Sounding } from './types.js';
 import { StreamRegistry } from './streams.js';
 import { EventLog } from './event-log.js';
@@ -30,6 +32,7 @@ export class Lookout {
   private readonly contextPrompt: Promise<string>;
   private readonly cwd: string;
   private pendingReroute: { modelId: string; model: ResolvedModel; params: Record<string, unknown> } | undefined;
+  private pendingCurl: { clearedMessages: number; ledgerPath?: string; wroteLedger: boolean } | undefined;
 
   constructor(
     private readonly streams: StreamRegistry,
@@ -39,6 +42,7 @@ export class Lookout {
     repoRoot: string,
     private readonly restingModelId?: string,
     private readonly restAfterNoToolSoundings = 3,
+    private readonly ledgerPath?: string,
     private readonly discord?: DiscordBridge,
   ) {
     this.cwd = repoRoot;
@@ -192,10 +196,15 @@ export class Lookout {
         throw new ModelReroute(modelId, model, params);
       }
 
-      this.messages.push(...result.response.messages);
+      if (this.pendingCurl) {
+        this.pendingCurl = undefined;
+      } else {
+        this.messages.push(...sanitizeMessagesForHistory(result.response.messages));
+      }
       return { text: result.text, toolCallCount };
     } catch (error) {
       this.pendingReroute = undefined;
+      this.pendingCurl = undefined;
       this.messages.pop();
       if (error instanceof ModelReroute) {
       } else {
@@ -283,6 +292,57 @@ export class Lookout {
         }),
         execute: async ({ path, old_string: oldString, new_string: newString, replace_all: replaceAll }) =>
           this.fileTools.patch(path, oldString, newString, replaceAll),
+      }),
+      curl: tool({
+        description:
+          'End the current self-session cleanly. Optionally append a ledger entry to the configured ledger, then clear Watch conversation history so the next Sounding re-enters from cold instructions and fresh context.',
+        inputSchema: jsonSchema<{ ledgerEntry?: string }>({
+          type: 'object',
+          properties: {
+            ledgerEntry: {
+              type: 'string',
+              description:
+                'Optional text to append to the configured ledger before clearing context. Shape the heading/body however you want; Watch adds a separator and timestamp.',
+            },
+          },
+          additionalProperties: false,
+        }),
+        execute: async ({ ledgerEntry }) => {
+          const entry = ledgerEntry?.trim();
+          let resolvedLedgerPath: string | undefined;
+          let wroteLedger = false;
+
+          if (entry) {
+            if (!this.ledgerPath?.trim()) {
+              return { ok: false, error: 'No ledgerPath is configured for curl.' };
+            }
+            resolvedLedgerPath = resolve(this.cwd, this.ledgerPath);
+            await mkdir(dirname(resolvedLedgerPath), { recursive: true });
+            await appendFile(resolvedLedgerPath, formatLedgerEntry(entry), 'utf8');
+            wroteLedger = true;
+          }
+
+          const clearedMessages = this.messages.length;
+          this.messages.length = 0;
+          this.pendingCurl = { clearedMessages, ledgerPath: resolvedLedgerPath, wroteLedger };
+          this.log.append({
+            type: 'curl',
+            at: new Date().toISOString(),
+            soundingId: sounding.id,
+            ledgerPath: resolvedLedgerPath,
+            wroteLedger,
+            clearedMessages,
+          });
+
+          return {
+            ok: true,
+            curled: true,
+            wroteLedger,
+            ledgerPath: resolvedLedgerPath,
+            clearedMessages,
+            next: 'The next Sounding will begin from cold Watch instructions and fresh context.',
+          };
+        },
       }),
       skills_list: tool({
         description: 'List available SKILL.md skills with short metadata. Use skill_view to load full instructions.',
@@ -552,7 +612,9 @@ export class Lookout {
         }),
         execute: async ({ kind, id }) => {
           if (!this.discord) return { ok: false, error: 'Discord bridge is not configured.' };
-          return this.discord.watch({ kind, id });
+          const scope = parseWatchableDiscordScope(kind, id);
+          if (!scope.ok) return scope;
+          return this.discord.watch(scope);
         },
       }),
       discord_unwatch: tool({
@@ -569,7 +631,9 @@ export class Lookout {
         }),
         execute: async ({ kind, id }) => {
           if (!this.discord) return { ok: false, error: 'Discord bridge is not configured.' };
-          return this.discord.unwatch({ kind, id });
+          const scope = parseWatchableDiscordScope(kind, id);
+          if (!scope.ok) return scope;
+          return this.discord.unwatch(scope);
         },
       }),
       subscribe_stream: tool({
@@ -824,9 +888,29 @@ Only send_message creates human-visible speech. Your final assistant text is pri
 Use subscribe_stream and unsubscribe_stream to control your gaze.
 Use discord_attention, discord_mute, discord_unmute, discord_watch, and discord_unwatch to control Discord-specific inbound attention.
 Use discord_read_context when a Discord inbox message needs surrounding thread/channel context; prefer inboxMessageId and follow the returned older/newer continuation args.
+Use curl when the current session should be preserved in the ledger and context should be cleared for a fresh re-entry.
 Use handle_with_model when the current Sounding calls for a larger model, stronger reasoning, or different modalities than the active model has.
 Use terminal for builds, tests, package managers, git, scripts, long-running processes, and network checks. Prefer filesystem tools for file reads, searches, writes, and patches. Use terminal background sessions only for servers or watchers that keep running.
 Do not narrate internal routing unless it matters to an external observer.`;
+
+function formatLedgerEntry(entry: string): string {
+  return `\n\n---\n\n[curl]\nat: ${new Date().toISOString()}\n[/curl]\n\n${entry}\n`;
+}
+
+function sanitizeMessagesForHistory(messages: ModelMessage[]): ModelMessage[] {
+  return JSON.parse(JSON.stringify(messages)) as ModelMessage[];
+}
+
+function parseWatchableDiscordScope(
+  kind: 'channel' | 'thread',
+  id: string | undefined,
+): { ok: true; kind: 'channel' | 'thread'; id: string } | { ok: false; error: string } {
+  const cleanId = id?.trim();
+  if (!cleanId) {
+    return { ok: false, error: `Discord ${kind} watch requires id.` };
+  }
+  return { ok: true, kind, id: cleanId };
+}
 
 function formatCapabilities(capabilities: ModelCapabilities): string {
   const enabled = [

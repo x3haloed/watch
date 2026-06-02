@@ -39,6 +39,7 @@ export class WatchRuntime {
       config.repoRoot,
       this.restingModelId,
       config.restAfterNoToolSoundings,
+      config.ledgerPath,
       this.discord,
     );
   }

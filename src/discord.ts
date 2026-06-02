@@ -489,12 +489,12 @@ function normalizePolicy(config?: DiscordConfig): DiscordAttentionPolicy {
     defaultDMs: config?.defaultDMs !== false,
     defaultMentions: config?.defaultMentions !== false,
     defaultReplies: config?.defaultReplies !== false,
-    mutedGuilds: new Set(config?.mutedGuilds ?? []),
-    mutedChannels: new Set(config?.mutedChannels ?? []),
-    mutedThreads: new Set(config?.mutedThreads ?? []),
-    mutedUsers: new Set(config?.mutedUsers ?? []),
-    watchedChannels: new Set(config?.watchedChannels ?? []),
-    watchedThreads: new Set(config?.watchedThreads ?? []),
+    mutedGuilds: cleanStringSet(config?.mutedGuilds),
+    mutedChannels: cleanStringSet(config?.mutedChannels),
+    mutedThreads: cleanStringSet(config?.mutedThreads),
+    mutedUsers: cleanStringSet(config?.mutedUsers),
+    watchedChannels: cleanStringSet(config?.watchedChannels),
+    watchedThreads: cleanStringSet(config?.watchedThreads),
   };
 }
 
@@ -513,11 +513,21 @@ function serializePolicy(policy: DiscordAttentionPolicy): JsonObject {
 }
 
 function setMembership(set: Set<string>, id: string, enabled: boolean): void {
+  if (!id.trim()) {
+    return;
+  }
   if (enabled) {
     set.add(id);
   } else {
     set.delete(id);
   }
+}
+
+function cleanStringSet(values: unknown): Set<string> {
+  if (!Array.isArray(values)) {
+    return new Set();
+  }
+  return new Set(values.filter((value): value is string => typeof value === 'string' && value.trim().length > 0));
 }
 
 function isDirectMessage(message: Message): boolean {
