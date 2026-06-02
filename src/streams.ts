@@ -20,6 +20,7 @@ export type StreamPopContext = {
 
 const DEFAULT_WEB_API_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_TEXT_STREAM_CHARS = 4000;
+const INBOX_PREVIEW_CHARS = 240;
 
 export interface WatchStream {
   readonly name: string;
@@ -92,14 +93,15 @@ class InboxStream implements WatchStream {
       const message = this.messages.get(id);
       return message
         ? [
-            {
+            compactJsonObject({
               id: message.id,
               medium: message.medium,
               source: message.source,
               subject: message.subject,
               receivedAt: message.receivedAt,
+              preview: inboxDeltaPreview(message),
               hint: `Call open_message with id ${message.id} to read the full message. To reply after reading, call send_message with medium "${message.medium}" and replyToId ${message.id}.`,
-            },
+            }),
           ]
         : [];
     });
@@ -306,6 +308,33 @@ function validIntervalMs(value: number | undefined): number {
     return DEFAULT_WEB_API_INTERVAL_MS;
   }
   return value;
+}
+
+function inboxDeltaPreview(message: StoredMessage): string | undefined {
+  if (!shouldPreviewInboxDelta(message)) {
+    return undefined;
+  }
+  return truncatePreview(message.content.replace(/\s+/g, ' ').trim());
+}
+
+function shouldPreviewInboxDelta(message: StoredMessage): boolean {
+  const discord = message.metadata?.discord;
+  if (!isJsonObject(discord)) {
+    return false;
+  }
+  const reason = discord.reason;
+  return reason === 'dm' || reason === 'mention' || reason === 'reply';
+}
+
+function truncatePreview(content: string): string | undefined {
+  if (!content) {
+    return undefined;
+  }
+  return content.length > INBOX_PREVIEW_CHARS ? `${content.slice(0, INBOX_PREVIEW_CHARS - 3)}...` : content;
+}
+
+function compactJsonObject(value: JsonObject): JsonObject {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
 }
 
 function validCharsPerSounding(value: number | undefined): number {
