@@ -192,6 +192,7 @@ export class Lookout {
     this.repairMessageHistory();
     this.messages.push({ role: 'user', content: prompt });
     let toolCallCount = 0;
+    const checkpointMessages: ModelMessage[] = [];
 
     try {
       const agent = new ToolLoopAgent({
@@ -203,6 +204,7 @@ export class Lookout {
         experimental_repairToolCall: repairFlatToolCall,
         onStepFinish: step => {
           toolCallCount += countToolCalls(step);
+          checkpointMessages.push(...sanitizeMessagesForHistory(step.response.messages as ModelMessage[]));
           this.log.append({
             type: 'model_step_finished',
             at: new Date().toISOString(),
@@ -245,9 +247,24 @@ export class Lookout {
     } catch (error) {
       this.pendingReroute = undefined;
       this.pendingCurl = undefined;
-      this.messages.pop();
       if (error instanceof ModelReroute) {
+        this.messages.pop();
       } else {
+        if (isTimeoutLikeError(error) || options.abortSignal?.aborted) {
+          this.messages.push(...checkpointMessages);
+          this.messages.push(timeoutTraceMessage(sounding, checkpointMessages.length, toolCallCount));
+          this.repairMessageHistory();
+          this.log.append({
+            type: 'model_timeout_checkpoint',
+            at: new Date().toISOString(),
+            soundingId: sounding.id,
+            modelId: model.id,
+            checkpointMessages: checkpointMessages.length,
+            toolCallCount,
+          });
+        } else {
+          this.messages.pop();
+        }
         this.log.append({
           type: 'model_error',
           at: new Date().toISOString(),
@@ -1178,6 +1195,23 @@ function formatLedgerEntry(entry: string): string {
   return `\n\n---\n\n[curl]\nat: ${new Date().toISOString()}\n[/curl]\n\n${entry}\n`;
 }
 
+function timeoutTraceMessage(sounding: Sounding, checkpointMessages: number, toolCallCount: number): ModelMessage {
+  const checkpointSummary = checkpointMessages > 0
+    ? `${checkpointMessages} response message(s) from completed model/tool steps were checkpointed into this conversation history. tool_call_count: ${toolCallCount}. Do not repeat completed tool calls unless the current situation requires it.`
+    : 'No model step completed before the timeout, so there are no assistant/tool messages to checkpoint.';
+  return {
+    role: 'user',
+    content: `[timeout_trace]
+Previous Sounding timed out before a normal assistant completion.
+sounding_id: ${sounding.id}
+trigger: ${sounding.trigger}
+clock: ${sounding.at}
+checkpoint: ${checkpointSummary}
+The original deltas for that Sounding may already have been popped from streams. Treat this as an interrupted attempt, not as absence of event. Continue from the visible checkpoint and current deltas.
+[/timeout_trace]`,
+  };
+}
+
 function mediaToolOutputToModelOutput(output: unknown): Record<string, unknown> {
   const result = output as { ok?: unknown; media?: Partial<OpenedMedia>; text?: unknown };
   if (result.ok === true && result.media?.dataBase64 && result.media.mediaType) {
@@ -1526,6 +1560,14 @@ function requiredApiKeyEnv(model: ResolvedModel): string | undefined {
   }
   const envName = model.apiKeyEnv ?? (model.provider === 'openrouter' ? 'OPENROUTER_API_KEY' : undefined);
   return envName && !process.env[envName]?.trim() ? envName : undefined;
+}
+
+function isTimeoutLikeError(error: unknown): boolean {
+  if (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name)) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /timeout|timed out|aborted due to timeout/i.test(message);
 }
 
 function errorToJson(error: unknown): Record<string, unknown> {
