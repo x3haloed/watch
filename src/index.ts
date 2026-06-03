@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
 import { cwd, exit } from 'node:process';
+import * as dotenv from 'dotenv';
 import { configPath, eventLogPath } from './paths.js';
 import { sendControl } from './client.js';
 import { runDaemon } from './server.js';
 import { runOperatorConsole } from './tui.js';
 import type { WatchConfig, WebApiStreamConfig } from './types.js';
+
+dotenv.config();
 
 type WatchConfigFile = {
   defaultModel?: string;
