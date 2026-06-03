@@ -59,6 +59,7 @@ export class Lookout {
   private pendingReroute: { modelId: string; model: ResolvedModel; params: Record<string, unknown> } | undefined;
   private pendingCurl: { clearedMessages: number; ledgerPath?: string; wroteLedger: boolean } | undefined;
   private disclosedContextThreshold = 0;
+  private disclosedEstimatedTokenWarning = false;
 
   constructor(
     private readonly streams: StreamRegistry,
@@ -69,6 +70,7 @@ export class Lookout {
     private readonly restingModelId?: string,
     private readonly restAfterNoToolSoundings = 3,
     private readonly ledgerPath?: string,
+    private readonly estimatedTokenWarningThreshold = 120_000,
     private readonly discord?: DiscordBridge,
   ) {
     this.cwd = repoRoot;
@@ -400,6 +402,7 @@ export class Lookout {
           const clearedMessages = this.messages.length;
           this.messages.length = 0;
           this.disclosedContextThreshold = 0;
+          this.disclosedEstimatedTokenWarning = false;
           this.pendingCurl = { clearedMessages, ledgerPath: resolvedLedgerPath, wroteLedger };
           this.log.append({
             type: 'curl',
@@ -1129,6 +1132,7 @@ This is a disclosure, not a punishment. You can continue on the current model, c
 `
       : '';
     const contextPressureFrame = this.contextDisclosureFrame(model, sounding);
+    const estimatedTokenWarningFrame = this.estimatedTokenWarningFrame(model, sounding);
 
     return `[cff_system]
 sounding_id: ${sounding.id}
@@ -1143,7 +1147,7 @@ available-models:
 ${this.models.listModelIds().map(id => `- ${id}`).join('\n')}
 subscriptions:
 ${this.streams.listSubscriptions().map(stream => `- ${stream}`).join('\n')}
-[/cff_system]${contextPressureFrame}
+[/cff_system]${estimatedTokenWarningFrame}${contextPressureFrame}
 
 [deltas]
 ${deltas || '(none)'}
@@ -1171,6 +1175,26 @@ active_model_limit_tokens: ${fit.limitTokens ?? 'unknown'}
 ${fit.recommendation ? `recommendation: ${fit.recommendation}` : 'recommendation: Context is growing. Keep curl available before the session becomes too heavy.'}
 curl_available: Call curl with a ledgerEntry to preserve what matters and clear the current session history.
 [/context_pressure]
+`;
+  }
+
+  private estimatedTokenWarningFrame(model: ResolvedModel, sounding: Sounding): string {
+    const threshold = validEstimatedTokenWarningThreshold(this.estimatedTokenWarningThreshold);
+    if (threshold === undefined || this.disclosedEstimatedTokenWarning) {
+      return '';
+    }
+    const fit = contextFitForModel(model, estimateTokensRough(JSON.stringify({ messages: this.messages, prompt: sounding })));
+    if (fit.usedTokensEstimate < threshold) {
+      return '';
+    }
+
+    this.disclosedEstimatedTokenWarning = true;
+    return `
+[estimated_token_warning]
+Context window has passed ${threshold} estimated tokens.
+used_tokens_estimate: ${fit.usedTokensEstimate}
+Soundings will take longer to complete and timeout risk is increasing. Recommend \`curl\` when ready.
+[/estimated_token_warning]
 `;
   }
 }
@@ -1429,6 +1453,10 @@ function contextFitForModel(model: ResolvedModel, usedTokensEstimate: number): C
     ratio,
     ...(recommendation ? { recommendation } : {}),
   };
+}
+
+function validEstimatedTokenWarningThreshold(value: number): number | undefined {
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
 }
 
 function contextRecommendation(ratio: number | null): string | undefined {

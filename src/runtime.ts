@@ -41,6 +41,7 @@ export class WatchRuntime {
       this.restingModelId,
       config.restAfterNoToolSoundings,
       config.ledgerPath,
+      config.estimatedTokenWarningThreshold,
       this.discord,
     );
   }
@@ -101,6 +102,7 @@ export class WatchRuntime {
           modelId: this.lookout.modelId,
           restingModelId: this.restingModelId,
           restAfterNoToolSoundings: this.config.restAfterNoToolSoundings,
+          estimatedTokenWarningThreshold: this.config.estimatedTokenWarningThreshold,
           noToolSoundings: this.noToolSoundings,
           availableModels: this.models.listModelIds(),
           activeModel: await this.models.getActive(),

@@ -12,6 +12,7 @@ export type WatchConfig = {
   discord?: DiscordConfig;
   restingModel?: string;
   restAfterNoToolSoundings: number;
+  estimatedTokenWarningThreshold: number;
   noModel: boolean;
 };
 

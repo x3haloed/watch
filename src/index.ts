@@ -15,6 +15,7 @@ type WatchConfigFile = {
   maxCffMs?: number;
   webApiStreams?: WebApiStreamConfig[];
   restAfterNoToolSoundings?: number;
+  estimatedTokenWarningThreshold?: number;
   discord?: WatchConfig['discord'];
 };
 
@@ -140,6 +141,7 @@ function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
     discord: file.discord,
     restingModel: stringFlag(args, '--resting-model') ?? file.restingModel ?? file.defaultModel ?? defaultModel,
     restAfterNoToolSoundings: numberFlag(args, '--rest-after-no-tool-soundings') ?? file.restAfterNoToolSoundings ?? 3,
+    estimatedTokenWarningThreshold: file.estimatedTokenWarningThreshold ?? 120_000,
     availableModels: (stringFlag(args, '--models') ?? '')
       .split(',')
       .map(model => model.trim())
