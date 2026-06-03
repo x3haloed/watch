@@ -43,6 +43,25 @@ export type RestModelBlockedNotice = RestModelNotice & {
   context: ContextFit;
 };
 
+export type RebootRequest = {
+  ledgerPath?: string;
+  wroteLedger: boolean;
+  clearedMessages: number;
+  source: 'tool' | 'control';
+};
+
+type CurlResult = {
+  ok: true;
+  curled: true;
+  wroteLedger: boolean;
+  ledgerPath?: string;
+  clearedMessages: number;
+  next: string;
+} | {
+  ok: false;
+  error: string;
+};
+
 export class ModelReroute extends Error {
   constructor(readonly toModelId: string, readonly model: ResolvedModel, readonly params: Record<string, unknown>) {
     super(`Reroute current Sounding to ${toModelId}`);
@@ -58,6 +77,7 @@ export class Lookout {
   private readonly cwd: string;
   private pendingReroute: { modelId: string; model: ResolvedModel; params: Record<string, unknown> } | undefined;
   private pendingCurl: { clearedMessages: number; ledgerPath?: string; wroteLedger: boolean } | undefined;
+  private pendingReboot: RebootRequest | undefined;
   private disclosedContextThreshold = 0;
   private disclosedEstimatedTokenWarning = false;
 
@@ -92,6 +112,16 @@ export class Lookout {
         messages: this.messages,
       }),
     ));
+  }
+
+  async curlFromSystem(soundingId: string, ledgerEntry?: string): Promise<CurlResult> {
+    return this.curlSession(soundingId, ledgerEntry);
+  }
+
+  consumeRebootRequest(): RebootRequest | undefined {
+    const request = this.pendingReboot;
+    this.pendingReboot = undefined;
+    return request;
   }
 
   async receive(
@@ -384,42 +414,46 @@ export class Lookout {
           },
           additionalProperties: false,
         }),
+        execute: async ({ ledgerEntry }) => this.curlSession(sounding.id, ledgerEntry),
+      }),
+      reboot: tool({
+        description:
+          'Cleanly reboot Watch. This first performs curl semantics: optionally append a ledger entry, clear conversation history, then request a full daemon restart after the current Sounding returns.',
+        inputSchema: jsonSchema<{ ledgerEntry?: string }>({
+          type: 'object',
+          properties: {
+            ledgerEntry: {
+              type: 'string',
+              description:
+                'Optional text to append to the configured ledger before clearing context and rebooting. Use this to preserve what matters before restart.',
+            },
+          },
+          additionalProperties: false,
+        }),
         execute: async ({ ledgerEntry }) => {
-          const entry = ledgerEntry?.trim();
-          let resolvedLedgerPath: string | undefined;
-          let wroteLedger = false;
-
-          if (entry) {
-            if (!this.ledgerPath?.trim()) {
-              return { ok: false, error: 'No ledgerPath is configured for curl.' };
-            }
-            resolvedLedgerPath = resolve(this.cwd, this.ledgerPath);
-            await mkdir(dirname(resolvedLedgerPath), { recursive: true });
-            await appendFile(resolvedLedgerPath, formatLedgerEntry(entry), 'utf8');
-            wroteLedger = true;
+          const result = await this.curlSession(sounding.id, ledgerEntry);
+          if (!result.ok) {
+            return result;
           }
-
-          const clearedMessages = this.messages.length;
-          this.messages.length = 0;
-          this.disclosedContextThreshold = 0;
-          this.disclosedEstimatedTokenWarning = false;
-          this.pendingCurl = { clearedMessages, ledgerPath: resolvedLedgerPath, wroteLedger };
+          this.pendingReboot = {
+            ledgerPath: result.ledgerPath,
+            wroteLedger: result.wroteLedger,
+            clearedMessages: result.clearedMessages,
+            source: 'tool',
+          };
           this.log.append({
-            type: 'curl',
+            type: 'reboot_requested',
             at: new Date().toISOString(),
             soundingId: sounding.id,
-            ledgerPath: resolvedLedgerPath,
-            wroteLedger,
-            clearedMessages,
+            ledgerPath: result.ledgerPath,
+            wroteLedger: result.wroteLedger,
+            clearedMessages: result.clearedMessages,
+            source: 'tool',
           });
-
           return {
-            ok: true,
-            curled: true,
-            wroteLedger,
-            ledgerPath: resolvedLedgerPath,
-            clearedMessages,
-            next: 'The next Sounding will begin from cold Watch instructions and fresh context.',
+            ...result,
+            reboot: true,
+            next: 'Watch will restart the daemon after this Sounding completes.',
           };
         },
       }),
@@ -1197,6 +1231,45 @@ Soundings will take longer to complete and timeout risk is increasing. Recommend
 [/estimated_token_warning]
 `;
   }
+
+  private async curlSession(soundingId: string, ledgerEntry?: string): Promise<CurlResult> {
+    const entry = ledgerEntry?.trim();
+    let resolvedLedgerPath: string | undefined;
+    let wroteLedger = false;
+
+    if (entry) {
+      if (!this.ledgerPath?.trim()) {
+        return { ok: false, error: 'No ledgerPath is configured for curl.' };
+      }
+      resolvedLedgerPath = resolve(this.cwd, this.ledgerPath);
+      await mkdir(dirname(resolvedLedgerPath), { recursive: true });
+      await appendFile(resolvedLedgerPath, formatLedgerEntry(entry), 'utf8');
+      wroteLedger = true;
+    }
+
+    const clearedMessages = this.messages.length;
+    this.messages.length = 0;
+    this.disclosedContextThreshold = 0;
+    this.disclosedEstimatedTokenWarning = false;
+    this.pendingCurl = { clearedMessages, ledgerPath: resolvedLedgerPath, wroteLedger };
+    this.log.append({
+      type: 'curl',
+      at: new Date().toISOString(),
+      soundingId,
+      ledgerPath: resolvedLedgerPath,
+      wroteLedger,
+      clearedMessages,
+    });
+
+    return {
+      ok: true,
+      curled: true,
+      wroteLedger,
+      ledgerPath: resolvedLedgerPath,
+      clearedMessages,
+      next: 'The next Sounding will begin from cold Watch instructions and fresh context.',
+    };
+  }
 }
 
 const LOOKOUT_INSTRUCTIONS = `You are the Lookout inside Watch.
@@ -1211,6 +1284,7 @@ Use discord_attention, discord_mute, discord_unmute, discord_watch, and discord_
 Use discord_read_context when a Discord inbox message needs surrounding thread/channel context; prefer inboxMessageId and follow the returned older/newer continuation args.
 Use open_media for images, audio, video, PDFs, or other media. If read_file says a path is media, follow its open_media hint. If open_media says the active model does not support that modality, call handle_with_model with one of the recommended model IDs before trying again.
 Use curl when the current session should be preserved in the ledger and context should be cleared for a fresh re-entry.
+Use reboot when the daemon itself should be restarted. reboot performs curl semantics first, then asks Watch to restart after the current Sounding completes.
 Use handle_with_model when the current Sounding calls for a larger model, stronger reasoning, or different modalities than the active model has.
 Use terminal for builds, tests, package managers, git, scripts, long-running processes, and network checks. Prefer filesystem tools for file reads, searches, writes, and patches. Use terminal background sessions only for servers or watchers that keep running.
 Do not narrate internal routing unless it matters to an external observer.`;

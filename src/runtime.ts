@@ -26,7 +26,7 @@ export class WatchRuntime {
   private pendingRestModelNotice: RestModelNotice | undefined;
   private pendingRestModelBlockedNotice: RestModelBlockedNotice | undefined;
 
-  constructor(private readonly config: WatchConfig) {
+  constructor(private readonly config: WatchConfig, private readonly requestReboot: (source: 'tool' | 'control') => void = () => {}) {
     this.streams = new StreamRegistry(config.webApiStreams, config.repoRoot);
     this.log = new EventLog(config.repoRoot);
     this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
@@ -127,6 +127,24 @@ export class WatchRuntime {
     if (request.command === 'stop') {
       await this.stop();
       return { ok: true };
+    }
+
+    if (request.command === 'reboot') {
+      const result = await this.lookout.curlFromSystem('control:reboot', request.ledgerEntry);
+      if (!result.ok) {
+        return result;
+      }
+      this.log.append({
+        type: 'reboot_requested',
+        at: new Date().toISOString(),
+        soundingId: 'control:reboot',
+        ledgerPath: result.ledgerPath,
+        wroteLedger: result.wroteLedger,
+        clearedMessages: result.clearedMessages,
+        source: 'control',
+      });
+      this.initiateReboot('control');
+      return { ok: true, data: { message: 'Reboot sequence initiated. Daemon will restart.', curl: result } };
     }
 
     return { ok: false, error: 'Unknown command' };
@@ -241,6 +259,10 @@ export class WatchRuntime {
             modelId: this.lookout.modelId,
             text: result.text,
           });
+          const reboot = this.lookout.consumeRebootRequest();
+          if (reboot) {
+            this.initiateReboot(reboot.source);
+          }
         } catch (error) {
           if (isAbortError(error) || this.activeAbortController?.signal.aborted) {
             this.log.append({
@@ -351,6 +373,12 @@ export class WatchRuntime {
     const notice = this.pendingRestModelBlockedNotice;
     this.pendingRestModelBlockedNotice = undefined;
     return notice;
+  }
+
+  private initiateReboot(source: 'tool' | 'control'): void {
+    this.running = false;
+    this.soundQueued = false;
+    this.requestReboot(source);
   }
 }
 

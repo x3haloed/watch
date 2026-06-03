@@ -124,13 +124,15 @@ export type WatchEvent =
   | { type: 'discord_error'; at: string; error: JsonObject }
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }
   | { type: 'curl'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number }
+  | { type: 'reboot_requested'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number; source: 'tool' | 'control' }
   | { type: 'model_skipped'; at: string; soundingId: string; reason: string };
 
 export type ControlRequest =
   | { command: 'send'; message: string; source?: string }
   | { command: 'status' }
   | { command: 'stop' }
-  | { command: 'sound' };
+  | { command: 'sound' }
+  | { command: 'reboot'; ledgerEntry?: string };
 
 export type ControlResponse = {
   ok: boolean;

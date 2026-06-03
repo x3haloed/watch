@@ -62,6 +62,12 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (area === 'reboot') {
+    const ledgerEntry = [action, ...args].filter(Boolean).join(' ').trim() || undefined;
+    print(await sendControl(repoRoot, { command: 'reboot', ledgerEntry }));
+    return;
+  }
+
   if (area === 'logs') {
     const pretty = action === '--pretty' || args.includes('--pretty');
     const lineArg = pretty ? args.find(arg => /^\d+$/.test(arg)) : action;
@@ -193,7 +199,8 @@ Commands:
   watch attach
   watch logs [lines]
   watch logs --pretty [lines]
-  watch stop`);
+  watch stop
+  watch reboot ["ledger entry"]`);
 }
 
 main().catch(error => {
