@@ -313,7 +313,6 @@ export class DiscordBridge {
     };
 
     if (!author) return drop('missing author');
-    if (author.bot) return drop('bot author');
     if (this.botUserId && author.id === this.botUserId) return drop('own message');
     if (!content && attachments.length === 0) return drop('empty content');
     if (guildId && this.policy.mutedGuilds.has(guildId)) return drop('muted guild');
