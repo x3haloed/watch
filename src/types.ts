@@ -23,6 +23,9 @@ export type WebApiStreamConfig = {
   intervalMs?: number;
   waking?: boolean;
   subscribed?: boolean;
+  emitUnchanged?: boolean;
+  ignorePaths?: string[];
+  kind?: 'tinyplace_canvas';
 };
 
 export type DiscordConfig = {
@@ -48,6 +51,7 @@ export type TextStreamSnapshot = {
 
 export type StreamRegistrySnapshot = {
   subscriptions: string[];
+  knownStreams?: string[];
   textStreams: TextStreamSnapshot[];
 };
 
