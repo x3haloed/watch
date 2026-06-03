@@ -5,6 +5,7 @@ import { Lookout, type RestModelBlockedNotice, type RestModelNotice } from './lo
 import { StreamRegistry } from './streams.js';
 import { ModelRegistry } from './model-registry.js';
 import { DiscordBridge } from './discord.js';
+import { GazeStore } from './gaze-state.js';
 
 export class WatchRuntime {
   private readonly streams: StreamRegistry;
@@ -12,6 +13,7 @@ export class WatchRuntime {
   private readonly lookout: Lookout;
   private readonly models: ModelRegistry;
   private readonly discord: DiscordBridge;
+  private readonly gazeStore: GazeStore;
   private lastSoundingAt = Date.now();
   private running = false;
   private tickTimer: NodeJS.Timeout | undefined;
@@ -27,10 +29,24 @@ export class WatchRuntime {
   private pendingRestModelBlockedNotice: RestModelBlockedNotice | undefined;
 
   constructor(private readonly config: WatchConfig, private readonly requestReboot: (source: 'tool' | 'control') => void = () => {}) {
-    this.streams = new StreamRegistry(config.webApiStreams, config.repoRoot);
+    this.gazeStore = new GazeStore(config.repoRoot);
+    this.streams = new StreamRegistry(
+      config.webApiStreams,
+      config.repoRoot,
+      this.gazeStore.streams,
+      snapshot => this.gazeStore.updateStreams(snapshot),
+    );
     this.log = new EventLog(config.repoRoot);
     this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
-    this.discord = new DiscordBridge(config.discord, this.streams, this.log);
+    this.discord = new DiscordBridge(
+      config.discord,
+      this.streams,
+      this.log,
+      this.gazeStore.discord,
+      policy => this.gazeStore.updateDiscord(policy),
+    );
+    this.gazeStore.updateStreams(this.streams.snapshot());
+    this.gazeStore.updateDiscord(this.discord.snapshotPolicy());
     this.restingModelId = config.restingModel ?? config.defaultModel;
     this.lookout = new Lookout(
       this.streams,
@@ -108,6 +124,7 @@ export class WatchRuntime {
           activeModel: await this.models.getActive(),
           subscriptions: this.streams.listSubscriptions(),
           discord: this.discord.getAttention(),
+          gazeState: this.gazeStore.snapshot(),
           minCffMs: this.config.minCffMs,
           maxCffMs: this.config.maxCffMs,
           modelTimeoutMs: this.config.modelTimeoutMs,

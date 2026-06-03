@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
-import type { JsonObject, ModelCapabilities, StreamDelta, WebApiStreamConfig } from './types.js';
+import type { JsonObject, ModelCapabilities, StreamDelta, StreamRegistrySnapshot, TextStreamSnapshot, WebApiStreamConfig } from './types.js';
 
 export type StoredMessage = {
   id: number;
@@ -301,6 +302,15 @@ class TextFileStream implements WatchStream {
   isDone(): boolean {
     return !this.hasDelta();
   }
+
+  snapshot(): TextStreamSnapshot {
+    return {
+      name: this.name,
+      file: this.file,
+      charsPerSounding: this.charsPerSounding,
+      nextChar: this.nextChar,
+    };
+  }
 }
 
 function validIntervalMs(value: number | undefined): number {
@@ -356,7 +366,12 @@ export class StreamRegistry {
   private readonly streams = new Map<string, WatchStream>();
   private readonly subscriptions = new Set<string>();
 
-  constructor(webApiStreams: WebApiStreamConfig[] = [], private readonly cwd = process.cwd()) {
+  constructor(
+    webApiStreams: WebApiStreamConfig[] = [],
+    private readonly cwd = process.cwd(),
+    initialState?: StreamRegistrySnapshot,
+    private readonly onGazeChanged: (snapshot: StreamRegistrySnapshot) => void = () => {},
+  ) {
     this.streams.set('clock', new ClockStream());
     this.streams.set('inbox', new InboxStream(this.messages));
     this.subscriptions.add('clock');
@@ -369,6 +384,8 @@ export class StreamRegistry {
         this.subscriptions.add(config.name);
       }
     }
+
+    this.restore(initialState);
   }
 
   subscribe(stream: string): boolean {
@@ -377,6 +394,9 @@ export class StreamRegistry {
       this.streams.set(stream, new BufferedStream(stream));
     }
     this.subscriptions.add(stream);
+    if (changed) {
+      this.emitGazeChanged();
+    }
     return changed;
   }
 
@@ -384,7 +404,11 @@ export class StreamRegistry {
     if (stream === 'clock') {
       return false;
     }
-    return this.subscriptions.delete(stream);
+    const changed = this.subscriptions.delete(stream);
+    if (changed) {
+      this.emitGazeChanged();
+    }
+    return changed;
   }
 
   async openTextFileStream(input: {
@@ -409,6 +433,7 @@ export class StreamRegistry {
     if (!stream.isDone()) {
       this.subscriptions.add(stream.name);
     }
+    this.emitGazeChanged();
     return {
       ok: true,
       stream: stream.name,
@@ -433,6 +458,9 @@ export class StreamRegistry {
     const unsubscribed = this.unsubscribe(stream);
     if (existed) {
       this.streams.delete(stream);
+    }
+    if (existed || unsubscribed) {
+      this.emitGazeChanged();
     }
     return {
       ok: true,
@@ -486,6 +514,9 @@ export class StreamRegistry {
       if (stream instanceof TextFileStream && stream.isDone()) {
         this.subscriptions.delete(stream.name);
         this.streams.delete(stream.name);
+        this.emitGazeChanged();
+      } else if (stream instanceof TextFileStream) {
+        this.emitGazeChanged();
       }
     }
     return deltas;
@@ -518,6 +549,49 @@ export class StreamRegistry {
     const rel = relative(resolve(this.cwd), path);
     if (!rel) return '.';
     return rel.startsWith('..') ? path : rel;
+  }
+
+  snapshot(): StreamRegistrySnapshot {
+    return {
+      subscriptions: this.listSubscriptions(),
+      textStreams: [...this.streams.values()]
+        .filter((stream): stream is TextFileStream => stream instanceof TextFileStream)
+        .map(stream => stream.snapshot()),
+    };
+  }
+
+  private restore(state: StreamRegistrySnapshot | undefined): void {
+    if (!state) {
+      return;
+    }
+
+    this.subscriptions.clear();
+    for (const stream of cleanStringArray(state.subscriptions)) {
+      if (!this.streams.has(stream)) {
+        this.streams.set(stream, new BufferedStream(stream));
+      }
+      this.subscriptions.add(stream);
+    }
+    this.subscriptions.add('clock');
+
+    for (const text of Array.isArray(state.textStreams) ? state.textStreams : []) {
+      if (!isTextStreamSnapshot(text)) {
+        continue;
+      }
+      try {
+        const content = readFileSyncUtf8(text.file);
+        this.streams.set(
+          text.name,
+          new TextFileStream(text.name, text.file, this.displayPath(text.file), content, validCharsPerSounding(text.charsPerSounding), text.nextChar),
+        );
+      } catch {
+        this.subscriptions.delete(text.name);
+      }
+    }
+  }
+
+  private emitGazeChanged(): void {
+    this.onGazeChanged(this.snapshot());
   }
 }
 
@@ -597,6 +671,25 @@ function parseJson(text: string): unknown {
 
 function hasParentTraversal(path: string): boolean {
   return path.split(/[\\/]+/).includes('..');
+}
+
+function cleanStringArray(values: unknown): string[] {
+  return Array.isArray(values) ? values.filter((value): value is string => typeof value === 'string' && value.trim().length > 0) : [];
+}
+
+function isTextStreamSnapshot(value: unknown): value is TextStreamSnapshot {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const item = value as Partial<TextStreamSnapshot>;
+  return typeof item.name === 'string'
+    && typeof item.file === 'string'
+    && typeof item.charsPerSounding === 'number'
+    && typeof item.nextChar === 'number';
+}
+
+function readFileSyncUtf8(path: string): string {
+  return readFileSync(path, 'utf8');
 }
 
 function deliveryModeFor(stream: string, capabilities: ModelCapabilities): string {

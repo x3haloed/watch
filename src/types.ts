@@ -39,6 +39,30 @@ export type DiscordConfig = {
   watchedThreads?: string[];
 };
 
+export type TextStreamSnapshot = {
+  name: string;
+  file: string;
+  charsPerSounding: number;
+  nextChar: number;
+};
+
+export type StreamRegistrySnapshot = {
+  subscriptions: string[];
+  textStreams: TextStreamSnapshot[];
+};
+
+export type DiscordPolicySnapshot = {
+  defaultDMs: boolean;
+  defaultMentions: boolean;
+  defaultReplies: boolean;
+  mutedGuilds: string[];
+  mutedChannels: string[];
+  mutedThreads: string[];
+  mutedUsers: string[];
+  watchedChannels: string[];
+  watchedThreads: string[];
+};
+
 export type ModelProvider = 'openrouter' | 'openai-compatible';
 
 export type ModelCapabilities = {

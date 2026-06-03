@@ -10,7 +10,7 @@ import {
 import { EventLog } from './event-log.js';
 import { StreamRegistry } from './streams.js';
 import { mediaTypeFromFilename, modalityFromMediaType } from './media.js';
-import type { DiscordConfig, JsonObject } from './types.js';
+import type { DiscordConfig, DiscordPolicySnapshot, JsonObject } from './types.js';
 
 type DiscordAttentionPolicy = {
   defaultDMs: boolean;
@@ -59,8 +59,10 @@ export class DiscordBridge {
     private readonly config: DiscordConfig | undefined,
     private readonly streams: StreamRegistry,
     private readonly log: EventLog,
+    initialPolicy?: DiscordPolicySnapshot,
+    private readonly onAttentionChanged: (policy: DiscordPolicySnapshot) => void = () => {},
   ) {
-    this.policy = normalizePolicy(config);
+    this.policy = normalizePolicy(config, initialPolicy);
     this.client = new Client({
       intents: [
         GatewayIntentBits.DirectMessages,
@@ -128,19 +130,25 @@ export class DiscordBridge {
       enabled: this.isEnabled(),
       connected: this.client.isReady(),
       botUserId: this.botUserId,
-      policy: serializePolicy(this.policy),
+      policy: this.snapshotPolicy(),
     };
+  }
+
+  snapshotPolicy(): DiscordPolicySnapshot {
+    return serializePolicy(this.policy);
   }
 
   mute(scope: AttentionScope): Record<string, unknown> {
     this.applyScope(scope, 'mute');
     this.logAttentionChanged('mute', scope);
+    this.emitAttentionChanged();
     return { ok: true, attention: this.getAttention() };
   }
 
   unmute(scope: AttentionScope): Record<string, unknown> {
     this.applyScope(scope, 'unmute');
     this.logAttentionChanged('unmute', scope);
+    this.emitAttentionChanged();
     return { ok: true, attention: this.getAttention() };
   }
 
@@ -148,6 +156,7 @@ export class DiscordBridge {
     const set = scope.kind === 'thread' ? this.policy.watchedThreads : this.policy.watchedChannels;
     set.add(scope.id);
     this.logAttentionChanged('watch', scope);
+    this.emitAttentionChanged();
     return { ok: true, attention: this.getAttention() };
   }
 
@@ -155,6 +164,7 @@ export class DiscordBridge {
     const set = scope.kind === 'thread' ? this.policy.watchedThreads : this.policy.watchedChannels;
     set.delete(scope.id);
     this.logAttentionChanged('unwatch', scope);
+    this.emitAttentionChanged();
     return { ok: true, attention: this.getAttention() };
   }
 
@@ -463,6 +473,10 @@ export class DiscordBridge {
     });
   }
 
+  private emitAttentionChanged(): void {
+    this.onAttentionChanged(serializePolicy(this.policy));
+  }
+
   private logError(error: unknown): void {
     this.log.append({
       type: 'discord_error',
@@ -487,21 +501,21 @@ export function parseDiscordAttentionScope(kind: string, id?: string): Attention
   throw new Error('scope kind must be one of dms, mentions, replies, guild, channel, thread, user');
 }
 
-function normalizePolicy(config?: DiscordConfig): DiscordAttentionPolicy {
+function normalizePolicy(config?: DiscordConfig, persisted?: DiscordPolicySnapshot): DiscordAttentionPolicy {
   return {
-    defaultDMs: config?.defaultDMs !== false,
-    defaultMentions: config?.defaultMentions !== false,
-    defaultReplies: config?.defaultReplies !== false,
-    mutedGuilds: cleanStringSet(config?.mutedGuilds),
-    mutedChannels: cleanStringSet(config?.mutedChannels),
-    mutedThreads: cleanStringSet(config?.mutedThreads),
-    mutedUsers: cleanStringSet(config?.mutedUsers),
-    watchedChannels: cleanStringSet(config?.watchedChannels),
-    watchedThreads: cleanStringSet(config?.watchedThreads),
+    defaultDMs: persisted?.defaultDMs ?? (config?.defaultDMs !== false),
+    defaultMentions: persisted?.defaultMentions ?? (config?.defaultMentions !== false),
+    defaultReplies: persisted?.defaultReplies ?? (config?.defaultReplies !== false),
+    mutedGuilds: cleanStringSet(persisted?.mutedGuilds ?? config?.mutedGuilds),
+    mutedChannels: cleanStringSet(persisted?.mutedChannels ?? config?.mutedChannels),
+    mutedThreads: cleanStringSet(persisted?.mutedThreads ?? config?.mutedThreads),
+    mutedUsers: cleanStringSet(persisted?.mutedUsers ?? config?.mutedUsers),
+    watchedChannels: cleanStringSet(persisted?.watchedChannels ?? config?.watchedChannels),
+    watchedThreads: cleanStringSet(persisted?.watchedThreads ?? config?.watchedThreads),
   };
 }
 
-function serializePolicy(policy: DiscordAttentionPolicy): JsonObject {
+function serializePolicy(policy: DiscordAttentionPolicy): DiscordPolicySnapshot {
   return {
     defaultDMs: policy.defaultDMs,
     defaultMentions: policy.defaultMentions,
