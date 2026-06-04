@@ -5,8 +5,10 @@ import type { DiscordPolicySnapshot, StreamRegistrySnapshot } from './types.js';
 export type GazeState = {
   version: 1;
   updatedAt: string;
+  activeModel?: string;
   streams?: StreamRegistrySnapshot;
   discord?: DiscordPolicySnapshot;
+  [key: string]: unknown;
 };
 
 export class GazeStore {
@@ -26,11 +28,11 @@ export class GazeStore {
   }
 
   updateStreams(streams: StreamRegistrySnapshot): void {
-    this.write({ ...this.state, streams });
+    this.write({ ...this.read(), streams });
   }
 
   updateDiscord(discord: DiscordPolicySnapshot): void {
-    this.write({ ...this.state, discord });
+    this.write({ ...this.read(), discord });
   }
 
   snapshot(): GazeState {
@@ -46,8 +48,10 @@ export class GazeStore {
     try {
       const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<GazeState>;
       return {
+        ...parsed,
         version: 1,
         updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+        activeModel: typeof parsed.activeModel === 'string' ? parsed.activeModel : undefined,
         streams: parsed.streams,
         discord: parsed.discord,
       };
@@ -58,10 +62,12 @@ export class GazeStore {
 
   private write(next: Omit<GazeState, 'version' | 'updatedAt'> & Partial<Pick<GazeState, 'version' | 'updatedAt'>>): void {
     this.state = {
+      ...next,
       version: 1,
       updatedAt: new Date().toISOString(),
-      streams: next.streams,
-      discord: next.discord,
+      activeModel: typeof next.activeModel === 'string' ? next.activeModel : undefined,
+      streams: next.streams as StreamRegistrySnapshot | undefined,
+      discord: next.discord as DiscordPolicySnapshot | undefined,
     };
     writeFileSync(statePath(this.repoRoot), `${JSON.stringify(this.state, null, 2)}\n`, 'utf8');
   }

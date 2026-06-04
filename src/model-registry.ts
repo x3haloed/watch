@@ -256,7 +256,25 @@ export class ModelRegistry {
 
   private writeActiveModel(activeModel: string): void {
     ensureWatchDir(this.repoRoot);
-    writeFileSync(statePath(this.repoRoot), `${JSON.stringify({ activeModel }, null, 2)}\n`, 'utf8');
+    const path = statePath(this.repoRoot);
+    let previous: Record<string, unknown> = {};
+    if (existsSync(path)) {
+      try {
+        previous = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+      } catch {
+        previous = {};
+      }
+    }
+    writeFileSync(
+      path,
+      `${JSON.stringify({
+        ...previous,
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        activeModel,
+      }, null, 2)}\n`,
+      'utf8',
+    );
   }
 }
 
