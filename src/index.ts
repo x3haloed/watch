@@ -17,6 +17,7 @@ type WatchConfigFile = {
   minCffMs?: number;
   maxCffMs?: number;
   webApiStreams?: WebApiStreamConfig[];
+  scratchpad?: WatchConfig['scratchpad'];
   restAfterNoToolSoundings?: number;
   estimatedTokenWarningThreshold?: number;
   discord?: WatchConfig['discord'];
@@ -148,6 +149,7 @@ function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
     ledgerPath: file.ledgerPath,
     webApiStreams: Array.isArray(file.webApiStreams) ? file.webApiStreams : [],
     discord: file.discord,
+    scratchpad: file.scratchpad ?? {},
     restingModel: stringFlag(args, '--resting-model') ?? file.restingModel ?? file.defaultModel ?? defaultModel,
     restAfterNoToolSoundings: numberFlag(args, '--rest-after-no-tool-soundings') ?? file.restAfterNoToolSoundings ?? 3,
     estimatedTokenWarningThreshold: file.estimatedTokenWarningThreshold ?? 120_000,

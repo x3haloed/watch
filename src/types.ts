@@ -10,10 +10,20 @@ export type WatchConfig = {
   webApiStreams: WebApiStreamConfig[];
   ledgerPath?: string;
   discord?: DiscordConfig;
+  scratchpad: ScratchpadConfig;
   restingModel?: string;
   restAfterNoToolSoundings: number;
   estimatedTokenWarningThreshold: number;
   noModel: boolean;
+};
+
+export type ScratchpadConfig = {
+  enabled?: boolean;
+  dir?: string;
+  agentFile?: string;
+  userFile?: string;
+  agentMaxChars?: number;
+  userMaxChars?: number;
 };
 
 export type WebApiStreamConfig = {

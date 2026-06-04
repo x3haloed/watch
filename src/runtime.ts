@@ -6,6 +6,7 @@ import { StreamRegistry } from './streams.js';
 import { ModelRegistry } from './model-registry.js';
 import { DiscordBridge } from './discord.js';
 import { GazeStore } from './gaze-state.js';
+import { Scratchpad } from './scratchpad.js';
 
 export class WatchRuntime {
   private readonly streams: StreamRegistry;
@@ -14,6 +15,7 @@ export class WatchRuntime {
   private readonly models: ModelRegistry;
   private readonly discord: DiscordBridge;
   private readonly gazeStore: GazeStore;
+  private readonly scratchpad: Scratchpad | undefined;
   private lastSoundingAt = Date.now();
   private running = false;
   private tickTimer: NodeJS.Timeout | undefined;
@@ -30,11 +32,15 @@ export class WatchRuntime {
 
   constructor(private readonly config: WatchConfig, private readonly requestReboot: (source: 'tool' | 'control') => void = () => {}) {
     this.gazeStore = new GazeStore(config.repoRoot);
+    this.scratchpad = config.scratchpad.enabled === false ? undefined : new Scratchpad(config.repoRoot, config.scratchpad);
     this.streams = new StreamRegistry(
       config.webApiStreams,
       config.repoRoot,
       this.gazeStore.streams,
       snapshot => this.gazeStore.updateStreams(snapshot),
+      !this.scratchpad
+        ? undefined
+        : { path: this.scratchpad.paths.userPath, maxChars: this.scratchpad.paths.userMaxChars },
     );
     this.log = new EventLog(config.repoRoot);
     this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
@@ -59,6 +65,7 @@ export class WatchRuntime {
       config.ledgerPath,
       config.estimatedTokenWarningThreshold,
       this.discord,
+      this.scratchpad,
     );
   }
 
@@ -125,6 +132,7 @@ export class WatchRuntime {
           subscriptions: this.streams.listSubscriptions(),
           discord: this.discord.getAttention(),
           gazeState: this.gazeStore.snapshot(),
+          scratchpad: this.scratchpad?.read() ?? { ok: false, enabled: false },
           minCffMs: this.config.minCffMs,
           maxCffMs: this.config.maxCffMs,
           modelTimeoutMs: this.config.modelTimeoutMs,

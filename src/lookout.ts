@@ -11,6 +11,7 @@ import { RepoFileTools } from './file-tools.js';
 import { SkillLibrary } from './skills.js';
 import { TerminalTools } from './terminal-tools.js';
 import { DiscordBridge, parseDiscordAttentionScope } from './discord.js';
+import { Scratchpad } from './scratchpad.js';
 import {
   mediaPlaceholder,
   modelSupportsMedia,
@@ -92,6 +93,7 @@ export class Lookout {
     private readonly ledgerPath?: string,
     private readonly estimatedTokenWarningThreshold = 120_000,
     private readonly discord?: DiscordBridge,
+    private readonly scratchpad?: Scratchpad,
   ) {
     this.cwd = repoRoot;
     this.fileTools = new RepoFileTools(repoRoot);
@@ -940,6 +942,29 @@ export class Lookout {
           soundingId: sounding.id,
         }),
       }),
+      scratchpad_read: tool({
+        description:
+          'Read the persistent scratchpad. AGENT.md is your current durable orientation; USER.md is notes from the user to you. USER.md is user-owned and cannot be modified through scratchpad tools.',
+        inputSchema: jsonSchema<Record<string, never>>({
+          type: 'object',
+          properties: {},
+          additionalProperties: false,
+        }),
+        execute: async () => this.scratchpad?.read() ?? { ok: false, error: 'Scratchpad is not configured.' },
+      }),
+      scratchpad_update_agent: tool({
+        description:
+          'Replace AGENT.md, your persistent scratchpad across sessions. Save durable facts and current orientation that will still matter later: user preferences from USER.md, environment details, tool quirks, stable conventions, and reminders that reduce future user steering. Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO state. If a fact will be stale in a week, it does not belong in AGENT.md. Use the ledger for testimony/session history. Write notes as declarative facts, not instructions to yourself. The result reads back the final saved AGENT.md content so you can verify the write stuck. This tool cannot modify USER.md.',
+        inputSchema: jsonSchema<{ content: string }>({
+          type: 'object',
+          properties: {
+            content: { type: 'string', description: 'Complete replacement content for AGENT.md. Keep it compact, current, and declarative.' },
+          },
+          required: ['content'],
+          additionalProperties: false,
+        }),
+        execute: async ({ content }) => this.scratchpad?.updateAgent(content) ?? { ok: false, error: 'Scratchpad is not configured.' },
+      }),
     };
   }
 
@@ -1063,7 +1088,20 @@ export class Lookout {
       this.availableSkillsPrompt(),
     ]);
     const environment = `[environment]\ncwd: ${this.cwd}\nFilesystem tools accept relative paths from cwd and absolute paths. They reject parent traversal paths containing "..".\n[/environment]`;
-    return [LOOKOUT_INSTRUCTIONS, environment, modelRoster, availableSkills, context].filter(Boolean).join('\n\n');
+    return [LOOKOUT_INSTRUCTIONS, this.scratchpadGuidance(), environment, modelRoster, availableSkills, context, this.scratchpad?.agentPrompt()].filter(Boolean).join('\n\n');
+  }
+
+  private scratchpadGuidance(): string {
+    if (!this.scratchpad) {
+      return '';
+    }
+    return [
+      'You have a persistent scratchpad across sessions. Save durable facts using scratchpad_update_agent: user preferences from USER.md, environment details, tool quirks, stable conventions, and current orientation that will still matter later.',
+      'Prioritize what reduces future user steering — the most valuable scratchpad note prevents the user from having to correct or remind you again. User preferences and recurring corrections matter more than procedural task details.',
+      'Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO state to AGENT.md. If a fact will be stale in a week, it does not belong there. Use the ledger for testimony/session history.',
+      'Write scratchpad notes as declarative facts, not instructions to yourself. "User prefers concise responses" is good. "Always respond concisely" is not. Imperative phrasing gets re-read as a directive in later sessions.',
+      'USER.md is user-owned. Treat user-notes deltas as notes from the user to you; use scratchpad_read to inspect both files, but update only AGENT.md through the scratchpad tool.',
+    ].join('\n');
   }
 
   private async modelRosterPrompt(): Promise<string> {
@@ -1249,6 +1287,7 @@ Soundings will take longer to complete and timeout risk is increasing. Recommend
 
     const clearedMessages = this.messages.length;
     this.messages.length = 0;
+    this.scratchpad?.refreshPromptSnapshot();
     this.disclosedContextThreshold = 0;
     this.disclosedEstimatedTokenWarning = false;
     this.pendingCurl = { clearedMessages, ledgerPath: resolvedLedgerPath, wroteLedger };
