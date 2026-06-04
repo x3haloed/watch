@@ -152,6 +152,58 @@ class BufferedStream implements WatchStream {
   }
 }
 
+class UserNotesStream implements WatchStream {
+  readonly name = 'user-notes';
+  readonly waking = false;
+  readonly sampled = true;
+  private lastContent: string | undefined;
+
+  constructor(
+    private readonly file: string,
+    private readonly maxChars: number,
+  ) {}
+
+  push(): void {
+    // User notes are sampled from disk during Sounding construction.
+  }
+
+  hasDelta(): boolean {
+    return false;
+  }
+
+  popDelta({ now }: StreamPopContext): StreamDelta | undefined {
+    const current = truncateText(readFileIfExists(this.file).trim(), this.maxChars);
+    if (this.lastContent === undefined) {
+      this.lastContent = current;
+      return {
+        stream: this.name,
+        at: now.toISOString(),
+        payload: {
+          kind: 'user_notes_snapshot',
+          file: this.file,
+          text: `[user-notes]\n${current || '(empty)'}\n[/user-notes]`,
+        },
+      };
+    }
+
+    if (current === this.lastContent) {
+      return undefined;
+    }
+
+    const patch = lineDiff(this.lastContent, current);
+    this.lastContent = current;
+    return {
+      stream: this.name,
+      at: now.toISOString(),
+      payload: {
+        kind: 'user_notes_patch',
+        file: this.file,
+        text: `[user-notes]\n${patch || '(changed, no line diff)'}\n[/user-notes]`,
+      },
+    };
+  }
+}
+
 class WebApiStream implements WatchStream {
   readonly sampled = true;
   readonly waking: boolean;
@@ -394,11 +446,18 @@ export class StreamRegistry {
     private readonly cwd = process.cwd(),
     initialState?: StreamRegistrySnapshot,
     private readonly onGazeChanged: (snapshot: StreamRegistrySnapshot) => void = () => {},
+    userNotes?: { path: string; maxChars: number },
   ) {
     this.streams.set('clock', new ClockStream());
     this.streams.set('inbox', new InboxStream(this.messages));
     this.subscriptions.add('clock');
     this.subscriptions.add('inbox');
+
+    if (userNotes) {
+      this.streams.set('user-notes', new UserNotesStream(userNotes.path, userNotes.maxChars));
+      this.subscriptions.add('user-notes');
+      this.configuredSubscriptions.add('user-notes');
+    }
 
     for (const config of webApiStreams) {
       if (!config.name.trim() || !config.url.trim()) continue;
@@ -821,6 +880,47 @@ function isTextStreamSnapshot(value: unknown): value is TextStreamSnapshot {
 
 function readFileSyncUtf8(path: string): string {
   return readFileSync(path, 'utf8');
+}
+
+function readFileIfExists(path: string): string {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+function truncateText(content: string, maxChars: number): string {
+  if (content.length <= maxChars) {
+    return content;
+  }
+  return `${content.slice(0, maxChars)}\n[...truncated user-notes at ${maxChars}/${content.length} chars]`;
+}
+
+function lineDiff(previous: string, current: string): string {
+  const previousLines = previous.split('\n');
+  const currentLines = current.split('\n');
+  const prefix = commonPrefixLength(previousLines, currentLines);
+  const suffix = commonSuffixLength(previousLines.slice(prefix), currentLines.slice(prefix));
+  const removed = previousLines.slice(prefix, previousLines.length - suffix).map(line => `- ${line}`);
+  const added = currentLines.slice(prefix, currentLines.length - suffix).map(line => `+ ${line}`);
+  return [...removed, ...added].join('\n');
+}
+
+function commonPrefixLength(a: string[], b: string[]): number {
+  let index = 0;
+  while (index < a.length && index < b.length && a[index] === b[index]) {
+    index += 1;
+  }
+  return index;
+}
+
+function commonSuffixLength(a: string[], b: string[]): number {
+  let count = 0;
+  while (count < a.length && count < b.length && a[a.length - 1 - count] === b[b.length - 1 - count]) {
+    count += 1;
+  }
+  return count;
 }
 
 function deliveryModeFor(stream: string, capabilities: ModelCapabilities): string {
