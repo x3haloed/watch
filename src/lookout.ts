@@ -261,7 +261,6 @@ export class Lookout {
       const result = await agent.generate({
         messages: this.messages,
         abortSignal: options.abortSignal,
-        timeout: options.timeoutMs,
       });
 
       if (this.pendingReroute) {
