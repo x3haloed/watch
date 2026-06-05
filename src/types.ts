@@ -140,6 +140,7 @@ export type WatchEvent =
   | { type: 'model_finished'; at: string; soundingId: string; modelId: string; result: JsonObject }
   | { type: 'model_error'; at: string; soundingId: string; modelId: string; error: JsonObject }
   | { type: 'model_aborted'; at: string; soundingId: string; modelId: string; reason: string }
+  | { type: 'model_failure_backoff'; at: string; modelId: string; failures: number; delayMs: number; until: string; reason: string }
   | { type: 'model_timeout_checkpoint'; at: string; soundingId: string; modelId: string; checkpointMessages: number; toolCallCount: number }
   | { type: 'model_unavailable'; at: string; soundingId: string; modelId: string; reason: string }
   | { type: 'model_reroute'; at: string; soundingId: string; fromModelId: string; toModelId: string; params: JsonObject }

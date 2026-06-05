@@ -8,6 +8,9 @@ import { DiscordBridge } from './discord.js';
 import { GazeStore } from './gaze-state.js';
 import { Scratchpad } from './scratchpad.js';
 
+const MODEL_FAILURE_BACKOFF_BASE_MS = 30_000;
+const MODEL_FAILURE_BACKOFF_MAX_MS = 5 * 60_000;
+
 export class WatchRuntime {
   private readonly streams: StreamRegistry;
   private readonly log: EventLog;
@@ -26,6 +29,8 @@ export class WatchRuntime {
   private queuedTrigger: Sounding['trigger'] = 'delta';
   private activeAbortController: AbortController | undefined;
   private noToolSoundings = 0;
+  private modelFailureCount = 0;
+  private modelBackoffUntil = 0;
   private readonly restingModelId: string | undefined;
   private pendingRestModelNotice: RestModelNotice | undefined;
   private pendingRestModelBlockedNotice: RestModelBlockedNotice | undefined;
@@ -139,6 +144,8 @@ export class WatchRuntime {
           noModel: this.config.noModel,
           soundingActive: this.soundingActive,
           soundQueued: this.soundQueued,
+          modelFailureCount: this.modelFailureCount,
+          modelBackoffUntil: this.modelBackoffUntil > Date.now() ? new Date(this.modelBackoffUntil).toISOString() : undefined,
           pendingDeltas: this.streams.hasPending(),
         },
       };
@@ -201,7 +208,12 @@ export class WatchRuntime {
       return;
     }
 
-    const elapsed = Date.now() - this.lastSoundingAt;
+    const now = Date.now();
+    if (now < this.modelBackoffUntil) {
+      return;
+    }
+
+    const elapsed = now - this.lastSoundingAt;
     const trigger = elapsed >= this.config.maxCffMs ? 'heartbeat' : 'delta';
     if ((elapsed >= this.config.minCffMs && this.streams.hasWakingPending()) || elapsed >= this.config.maxCffMs) {
       void this.sound(trigger);
@@ -212,6 +224,11 @@ export class WatchRuntime {
     if (this.soundingActive) {
       this.soundQueued = true;
       this.queuedTrigger = this.queuedTrigger === 'heartbeat' || trigger === 'heartbeat' ? 'heartbeat' : trigger;
+      return;
+    }
+    if (trigger === 'manual') {
+      this.clearModelFailureBackoff();
+    } else if (Date.now() < this.modelBackoffUntil) {
       return;
     }
 
@@ -263,7 +280,8 @@ export class WatchRuntime {
             modelId: model.id,
             error: { name: 'ModelUnavailable', message: availability.reason },
           });
-          continue;
+          this.beginModelFailureBackoff(model.id, availability.reason);
+          break;
         }
 
         try {
@@ -277,6 +295,7 @@ export class WatchRuntime {
             restModelBlockedNotice,
           });
           await this.recordToolActivity(result.toolCallCount);
+          this.clearModelFailureBackoff();
           this.log.append({
             type: 'sounding_finished',
             at: new Date().toISOString(),
@@ -305,11 +324,12 @@ export class WatchRuntime {
             modelId: this.lookout.modelId,
             error: errorToJson(error),
           });
+          this.beginModelFailureBackoff(this.lookout.modelId, errorMessage(error));
         } finally {
           this.activeAbortController = undefined;
         }
 
-        if (this.running && (this.soundQueued || this.streams.hasWakingPending())) {
+        if (this.running && Date.now() >= this.modelBackoffUntil && (this.soundQueued || this.streams.hasWakingPending())) {
           nextTrigger = this.queuedTrigger;
           this.queuedTrigger = 'delta';
         }
@@ -317,6 +337,31 @@ export class WatchRuntime {
     } finally {
       this.soundingActive = false;
     }
+  }
+
+  private beginModelFailureBackoff(modelId: string, reason: string): void {
+    this.modelFailureCount += 1;
+    const delayMs = Math.min(
+      MODEL_FAILURE_BACKOFF_MAX_MS,
+      MODEL_FAILURE_BACKOFF_BASE_MS * 2 ** Math.max(0, this.modelFailureCount - 1),
+    );
+    this.modelBackoffUntil = Date.now() + delayMs;
+    this.soundQueued = false;
+    this.queuedTrigger = 'delta';
+    this.log.append({
+      type: 'model_failure_backoff',
+      at: new Date().toISOString(),
+      modelId,
+      failures: this.modelFailureCount,
+      delayMs,
+      until: new Date(this.modelBackoffUntil).toISOString(),
+      reason,
+    });
+  }
+
+  private clearModelFailureBackoff(): void {
+    this.modelFailureCount = 0;
+    this.modelBackoffUntil = 0;
   }
 
   private async recordToolActivity(toolCallCount: number): Promise<void> {
@@ -413,6 +458,10 @@ function isAbortError(error: unknown): boolean {
 
 function abortReason(reason: unknown): string {
   return typeof reason === 'string' ? reason : reason instanceof Error ? reason.message : 'aborted';
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function errorToJson(error: unknown): Record<string, unknown> {

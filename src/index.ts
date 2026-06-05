@@ -237,6 +237,8 @@ function formatLogLine(line: string): string {
         return `${at} model error ${event.soundingId} ${event.error?.name ?? 'Error'}: ${event.error?.message ?? ''}`;
       case 'model_aborted':
         return `${at} model aborted ${event.soundingId} reason=${event.reason}`;
+      case 'model_failure_backoff':
+        return `${at} model failure backoff ${event.modelId} failures=${event.failures} delay=${event.delayMs}ms until=${event.until} reason=${event.reason}`;
       case 'model_unavailable':
         return `${at} model unavailable ${event.soundingId} ${event.modelId}: ${event.reason}`;
       case 'sounding_failed':
