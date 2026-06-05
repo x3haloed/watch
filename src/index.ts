@@ -217,8 +217,10 @@ function formatLogLine(line: string): string {
     switch (event.type) {
       case 'daemon_started':
         return `${at} daemon started pid=${event.pid}`;
+      case 'daemon_start_blocked':
+        return `${at} daemon start blocked pid=${event.pid ?? '?'} reason=${event.reason}`;
       case 'daemon_stopped':
-        return `${at} daemon stopped reason=${event.reason}`;
+        return `${at} daemon stopped pid=${event.pid ?? '?'} reason=${event.reason}`;
       case 'stream_delta':
         return `${at} delta ${event.delta?.stream}: ${shortJson(event.delta?.payload)}`;
       case 'stream_buffered':

@@ -15,6 +15,10 @@ export function socketPath(repoRoot: string): string {
   return join(watchDir(repoRoot), 'watch.sock');
 }
 
+export function daemonLockPath(repoRoot: string): string {
+  return join(watchDir(repoRoot), 'daemon.lock');
+}
+
 export function eventLogPath(repoRoot: string): string {
   return join(watchDir(repoRoot), 'events.jsonl');
 }

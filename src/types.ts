@@ -129,7 +129,8 @@ export type Sounding = {
 
 export type WatchEvent =
   | { type: 'daemon_started'; at: string; pid: number; config: WatchConfig }
-  | { type: 'daemon_stopped'; at: string; reason: string }
+  | { type: 'daemon_start_blocked'; at: string; pid?: number; lockPath: string; reason: string }
+  | { type: 'daemon_stopped'; at: string; pid?: number; reason: string }
   | { type: 'stream_buffered'; at: string; stream: string; payload: JsonObject }
   | { type: 'stream_delta'; at: string; delta: StreamDelta }
   | { type: 'sounding_started'; at: string; sounding: Sounding }

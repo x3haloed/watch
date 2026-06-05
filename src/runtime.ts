@@ -87,7 +87,7 @@ export class WatchRuntime {
     this.soundQueued = false;
     this.activeAbortController?.abort(reason);
     await this.discord.stop(reason);
-    this.log.append({ type: 'daemon_stopped', at: new Date().toISOString(), reason });
+    this.log.append({ type: 'daemon_stopped', at: new Date().toISOString(), pid: process.pid, reason });
   }
 
   async handle(request: ControlRequest): Promise<ControlResponse> {
