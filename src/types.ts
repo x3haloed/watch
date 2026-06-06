@@ -8,6 +8,7 @@ export type WatchConfig = {
   defaultModel: string;
   availableModels: string[];
   webApiStreams: WebApiStreamConfig[];
+  cameraStreams: CameraStreamConfig[];
   ledgerPath?: string;
   discord?: DiscordConfig;
   scratchpad: ScratchpadConfig;
@@ -36,6 +37,19 @@ export type WebApiStreamConfig = {
   emitUnchanged?: boolean;
   ignorePaths?: string[];
   kind?: 'tinyplace_canvas';
+};
+
+export type CameraStreamConfig = {
+  name: string;
+  url: string;
+  mode?: 'stills' | 'video';
+  fps?: number;
+  duration?: number;
+  motionGate?: boolean;
+  format?: 'base64';
+  waking?: boolean;
+  subscribed?: boolean;
+  maxBufferedChunks?: number;
 };
 
 export type DiscordConfig = {
@@ -133,6 +147,10 @@ export type WatchEvent =
   | { type: 'daemon_stopped'; at: string; pid?: number; reason: string }
   | { type: 'stream_buffered'; at: string; stream: string; payload: JsonObject }
   | { type: 'stream_delta'; at: string; delta: StreamDelta }
+  | { type: 'camera_stream_connected'; at: string; stream: string; url: string; handshake: JsonObject }
+  | { type: 'camera_stream_disconnected'; at: string; stream: string; reason: string }
+  | { type: 'camera_stream_buffered'; at: string; stream: string; sequence?: number; mediaType?: string; sizeBytes?: number }
+  | { type: 'camera_stream_error'; at: string; stream: string; error: JsonObject }
   | { type: 'sounding_started'; at: string; sounding: Sounding }
   | { type: 'sounding_finished'; at: string; soundingId: string; modelId: string; text: string }
   | { type: 'sounding_failed'; at: string; soundingId: string; modelId: string; error: JsonObject }

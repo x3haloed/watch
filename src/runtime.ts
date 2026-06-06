@@ -7,6 +7,7 @@ import { ModelRegistry } from './model-registry.js';
 import { DiscordBridge } from './discord.js';
 import { GazeStore } from './gaze-state.js';
 import { Scratchpad } from './scratchpad.js';
+import { CameraStreamBridge, registerCameraStreams } from './camera-streams.js';
 
 const MODEL_FAILURE_BACKOFF_BASE_MS = 30_000;
 const MODEL_FAILURE_BACKOFF_MAX_MS = 5 * 60_000;
@@ -19,6 +20,7 @@ export class WatchRuntime {
   private readonly discord: DiscordBridge;
   private readonly gazeStore: GazeStore;
   private readonly scratchpad: Scratchpad | undefined;
+  private readonly cameraStreams: CameraStreamBridge[];
   private lastSoundingAt = Date.now();
   private running = false;
   private tickTimer: NodeJS.Timeout | undefined;
@@ -48,6 +50,7 @@ export class WatchRuntime {
         : { path: this.scratchpad.paths.userPath, maxChars: this.scratchpad.paths.userMaxChars },
     );
     this.log = new EventLog(config.repoRoot);
+    this.cameraStreams = registerCameraStreams(config.cameraStreams, this.streams, this.log);
     this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
     this.discord = new DiscordBridge(
       config.discord,
@@ -81,6 +84,9 @@ export class WatchRuntime {
     this.running = true;
     this.log.append({ type: 'daemon_started', at: new Date().toISOString(), pid: process.pid, config: this.config });
     void this.discord.start();
+    for (const bridge of this.cameraStreams) {
+      bridge.start();
+    }
     this.clockTimer = setInterval(() => this.sampleClock(), 250);
     this.tickTimer = setInterval(() => void this.maybeSound(), 100);
   }
@@ -91,6 +97,9 @@ export class WatchRuntime {
     if (this.clockTimer) clearInterval(this.clockTimer);
     this.soundQueued = false;
     this.activeAbortController?.abort(reason);
+    for (const bridge of this.cameraStreams) {
+      bridge.stop(reason);
+    }
     await this.discord.stop(reason);
     this.log.append({ type: 'daemon_stopped', at: new Date().toISOString(), pid: process.pid, reason });
   }

@@ -120,13 +120,19 @@ class InboxStream implements WatchStream {
 }
 
 class BufferedStream implements WatchStream {
-  readonly waking = true;
   private payloads: JsonObject[] = [];
 
-  constructor(readonly name: string) {}
+  constructor(
+    readonly name: string,
+    readonly waking = true,
+    private readonly maxPayloads = Infinity,
+  ) {}
 
   push(payload: JsonObject): void {
     this.payloads.push({ ...payload, receivedAt: new Date().toISOString() });
+    if (this.payloads.length > this.maxPayloads) {
+      this.payloads = this.payloads.slice(-this.maxPayloads);
+    }
   }
 
   hasDelta(): boolean {
@@ -519,6 +525,13 @@ function validCharsPerSounding(value: number | undefined): number {
   return Math.max(1, Math.min(100_000, Math.floor(value)));
 }
 
+function validMaxPayloads(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return Infinity;
+  }
+  return Math.max(1, Math.min(100, Math.floor(value)));
+}
+
 function clampChar(value: number, totalChars: number): number {
   if (!Number.isFinite(value)) {
     return 0;
@@ -575,6 +588,17 @@ export class StreamRegistry {
       this.emitGazeChanged();
     }
     return changed;
+  }
+
+  registerBufferedStream(stream: string, options: { subscribed?: boolean; waking?: boolean; maxPayloads?: number } = {}): void {
+    if (!this.streams.has(stream)) {
+      this.streams.set(stream, new BufferedStream(stream, options.waking ?? true, validMaxPayloads(options.maxPayloads)));
+    }
+    if (options.subscribed !== false) {
+      this.subscriptions.add(stream);
+    }
+    this.configuredSubscriptions.add(stream);
+    this.emitGazeChanged();
   }
 
   unsubscribe(stream: string): boolean {
