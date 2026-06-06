@@ -22,6 +22,7 @@ export type StreamPopContext = {
 const DEFAULT_WEB_API_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_TEXT_STREAM_CHARS = 4000;
 const INBOX_PREVIEW_CHARS = 240;
+const ERROR_STREAM_MAX_ITEMS = 20;
 
 export interface WatchStream {
   readonly name: string;
@@ -149,6 +150,71 @@ class BufferedStream implements WatchStream {
         items: payloads,
       },
     };
+  }
+}
+
+class ErrorStream implements WatchStream {
+  readonly name = 'errors';
+  readonly waking = true;
+  private pending: JsonObject[] = [];
+  private activeRepeat: JsonObject | undefined;
+
+  push(payload: JsonObject): void {
+    const now = new Date().toISOString();
+    const item = compactJsonObject({
+      ...payload,
+      severity: typeof payload.severity === 'string' ? payload.severity : 'error',
+      receivedAt: now,
+    });
+    const key = errorFingerprint(item);
+    if (this.activeRepeat && this.activeRepeat.fingerprint === key) {
+      this.activeRepeat.count = Number(this.activeRepeat.count ?? 1) + 1;
+      this.activeRepeat.lastAt = now;
+      return;
+    }
+    this.flushRepeat();
+    this.activeRepeat = {
+      ...item,
+      fingerprint: key,
+      count: 1,
+      firstAt: now,
+      lastAt: now,
+    };
+  }
+
+  hasDelta(): boolean {
+    return !!this.activeRepeat || this.pending.length > 0;
+  }
+
+  popDelta({ now }: StreamPopContext): StreamDelta | undefined {
+    this.flushRepeat();
+    if (this.pending.length === 0) {
+      return undefined;
+    }
+    const items = this.pending.splice(0, ERROR_STREAM_MAX_ITEMS);
+    const remaining = this.pending.length;
+    return {
+      stream: this.name,
+      at: now.toISOString(),
+      payload: {
+        count: items.length,
+        remaining,
+        items: items.map(item => compactJsonObject({
+          ...item,
+          fingerprint: undefined,
+          repeated: Number(item.count ?? 1) > 1 ? item.count : undefined,
+          hint: errorHint(item),
+        })),
+      },
+    };
+  }
+
+  private flushRepeat(): void {
+    if (!this.activeRepeat) {
+      return;
+    }
+    this.pending.push(this.activeRepeat);
+    this.activeRepeat = undefined;
   }
 }
 
@@ -421,6 +487,31 @@ function compactJsonObject(value: JsonObject): JsonObject {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
 }
 
+function errorFingerprint(item: JsonObject): string {
+  return JSON.stringify({
+    severity: item.severity,
+    source: item.source,
+    kind: item.kind,
+    modelId: item.modelId,
+    message: item.message ?? item.reason ?? item.error,
+  });
+}
+
+function errorHint(item: JsonObject): string | undefined {
+  const source = typeof item.source === 'string' ? item.source : '';
+  const kind = typeof item.kind === 'string' ? item.kind : '';
+  if (source === 'inference' || kind.startsWith('model_')) {
+    return 'Provider/model trouble is part of the operating environment. Consider handle_with_model, curl, or waiting if the provider is unstable.';
+  }
+  if (source === 'discord') {
+    return 'Discord bridge reported an internal error. If it repeats, inspect discord_attention or ask the operator to restart Watch.';
+  }
+  if (source === 'runtime') {
+    return 'Watch runtime reported an internal warning/error. If it blocks action, preserve context with curl or ask the operator to inspect logs.';
+  }
+  return undefined;
+}
+
 function validCharsPerSounding(value: number | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     return DEFAULT_TEXT_STREAM_CHARS;
@@ -450,8 +541,11 @@ export class StreamRegistry {
   ) {
     this.streams.set('clock', new ClockStream());
     this.streams.set('inbox', new InboxStream(this.messages));
+    this.streams.set('errors', new ErrorStream());
     this.subscriptions.add('clock');
     this.subscriptions.add('inbox');
+    this.subscriptions.add('errors');
+    this.configuredSubscriptions.add('errors');
 
     if (userNotes) {
       this.streams.set('user-notes', new UserNotesStream(userNotes.path, userNotes.maxChars));

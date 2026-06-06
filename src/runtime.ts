@@ -273,6 +273,14 @@ export class WatchRuntime {
             modelId: model.id,
             reason: availability.reason,
           });
+          this.pushErrorStream({
+            severity: 'error',
+            source: 'inference',
+            kind: 'model_unavailable',
+            modelId: model.id,
+            soundingId: sounding.id,
+            message: availability.reason,
+          });
           this.log.append({
             type: 'sounding_failed',
             at: new Date().toISOString(),
@@ -280,7 +288,7 @@ export class WatchRuntime {
             modelId: model.id,
             error: { name: 'ModelUnavailable', message: availability.reason },
           });
-          this.beginModelFailureBackoff(model.id, availability.reason);
+          this.beginModelFailureBackoff(model.id, availability.reason, sounding.id);
           break;
         }
 
@@ -324,7 +332,15 @@ export class WatchRuntime {
             modelId: this.lookout.modelId,
             error: errorToJson(error),
           });
-          this.beginModelFailureBackoff(this.lookout.modelId, errorMessage(error));
+          this.pushErrorStream({
+            severity: isAbortError(error) ? 'warning' : 'error',
+            source: 'inference',
+            kind: isAbortError(error) ? 'model_aborted' : 'model_error',
+            modelId: this.lookout.modelId,
+            soundingId: sounding.id,
+            message: errorMessage(error),
+          });
+          this.beginModelFailureBackoff(this.lookout.modelId, errorMessage(error), sounding.id);
         } finally {
           this.activeAbortController = undefined;
         }
@@ -339,7 +355,7 @@ export class WatchRuntime {
     }
   }
 
-  private beginModelFailureBackoff(modelId: string, reason: string): void {
+  private beginModelFailureBackoff(modelId: string, reason: string, soundingId?: string): void {
     this.modelFailureCount += 1;
     const delayMs = Math.min(
       MODEL_FAILURE_BACKOFF_MAX_MS,
@@ -356,6 +372,16 @@ export class WatchRuntime {
       delayMs,
       until: new Date(this.modelBackoffUntil).toISOString(),
       reason,
+    });
+    this.pushErrorStream({
+      severity: 'warning',
+      source: 'runtime',
+      kind: 'model_failure_backoff',
+      modelId,
+      soundingId,
+      message: reason,
+      delayMs,
+      until: new Date(this.modelBackoffUntil).toISOString(),
     });
   }
 
@@ -394,6 +420,14 @@ export class WatchRuntime {
           noToolSoundings: this.noToolSoundings,
           context,
         });
+        this.pushErrorStream({
+          severity: 'warning',
+          source: 'runtime',
+          kind: 'model_auto_restore_blocked',
+          modelId: restingModelId,
+          message: `Could not restore resting model ${restingModelId}: context does not fit.`,
+          context,
+        });
         this.pendingRestModelBlockedNotice = {
           fromModelId,
           toModelId: restingModelId,
@@ -425,6 +459,31 @@ export class WatchRuntime {
         toModelId: restingModelId,
         noToolSoundings: this.noToolSoundings,
         error: errorToJson(error),
+      });
+      this.pushErrorStream({
+        severity: 'error',
+        source: 'runtime',
+        kind: 'model_auto_restore_failed',
+        modelId: restingModelId,
+        message: errorMessage(error),
+      });
+    }
+  }
+
+  private pushErrorStream(payload: Record<string, unknown>): void {
+    const accepted = this.streams.push('errors', payload);
+    if (accepted) {
+      this.log.append({
+        type: 'stream_buffered',
+        at: new Date().toISOString(),
+        stream: 'errors',
+        payload: {
+          source: payload.source,
+          kind: payload.kind,
+          severity: payload.severity,
+          modelId: payload.modelId,
+          message: payload.message,
+        },
       });
     }
   }

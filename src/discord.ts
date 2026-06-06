@@ -91,6 +91,7 @@ export class DiscordBridge {
         at: new Date().toISOString(),
         reason: `${tokenEnv} is not set`,
       });
+      this.pushErrorStream('missing_token', `${tokenEnv} is not set`);
       return;
     }
 
@@ -477,10 +478,22 @@ export class DiscordBridge {
   }
 
   private logError(error: unknown): void {
+    const errorJson = errorToJson(error);
     this.log.append({
       type: 'discord_error',
       at: new Date().toISOString(),
-      error: errorToJson(error),
+      error: errorJson,
+    });
+    this.pushErrorStream('discord_error', errorMessage(error), errorJson);
+  }
+
+  private pushErrorStream(kind: string, message: string, error?: Record<string, unknown>): void {
+    this.streams.push('errors', {
+      severity: 'error',
+      source: 'discord',
+      kind,
+      message,
+      error,
     });
   }
 }
