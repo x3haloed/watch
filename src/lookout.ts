@@ -259,7 +259,7 @@ export class Lookout {
       });
 
       const result = await agent.generate({
-        messages: this.messages,
+        messages: messagesForModel(model, this.messages),
         abortSignal: options.abortSignal,
       });
 
@@ -1367,7 +1367,64 @@ function mediaToolOutputToModelOutput(output: unknown): Record<string, unknown> 
 }
 
 function sanitizeMessagesForHistory(messages: ModelMessage[]): ModelMessage[] {
-  return repairIncompleteToolTurns(scrubMediaValue(JSON.parse(JSON.stringify(messages))) as ModelMessage[]);
+  return repairIncompleteToolTurns(JSON.parse(JSON.stringify(messages)) as ModelMessage[]);
+}
+
+export function messagesForModel(model: ResolvedModel, messages: ModelMessage[]): ModelMessage[] {
+  return replaceUnsupportedMediaForModel(JSON.parse(JSON.stringify(messages)), model) as ModelMessage[];
+}
+
+function replaceUnsupportedMediaForModel(value: unknown, model: ResolvedModel): unknown {
+  if (Array.isArray(value)) {
+    return value.map(item => replaceUnsupportedMediaForModel(item, model));
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const mediaType = mediaTypeFromRecord(record);
+  const modality = mediaType ? modalityFromMediaType(mediaType) : undefined;
+  if (mediaType && modality && !modelSupportsMedia(model, modality)) {
+    return unsupportedMediaPlaceholder(record, mediaType, modality, model);
+  }
+
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, replaceUnsupportedMediaForModel(item, model)]));
+}
+
+function mediaTypeFromRecord(record: Record<string, unknown>): string | undefined {
+  if (
+    (record.type === 'media' || record.type === 'image-data' || record.type === 'file-data')
+    && typeof record.mediaType === 'string'
+  ) {
+    return record.mediaType;
+  }
+  if ('dataBase64' in record && typeof record.mediaType === 'string') {
+    return record.mediaType;
+  }
+  return undefined;
+}
+
+function unsupportedMediaPlaceholder(record: Record<string, unknown>, mediaType: string, modality: MediaDescriptor['modality'], model: ResolvedModel): unknown {
+  const name = mediaNameFromRecord(record);
+  return {
+    type: 'text',
+    text: `[${name} was attached but model ${model.id} does not support ${modality} input (${mediaType})]`,
+  };
+}
+
+function mediaNameFromRecord(record: Record<string, unknown>): string {
+  if (typeof record.filename === 'string' && record.filename.trim()) {
+    return record.filename.trim();
+  }
+  if (typeof record.path === 'string' && record.path.trim()) {
+    return record.path.trim();
+  }
+  if (typeof record.url === 'string' && record.url.trim()) {
+    return record.url.trim();
+  }
+  const mediaType = typeof record.mediaType === 'string' ? record.mediaType : 'media';
+  return mediaType;
 }
 
 function repairIncompleteToolTurns(messages: ModelMessage[]): ModelMessage[] {
