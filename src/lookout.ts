@@ -52,12 +52,6 @@ export type RestModelBlockedNotice = RestModelNotice & {
   context: ContextFit;
 };
 
-export class ModelReroute extends Error {
-  constructor(readonly toModelId: string, readonly model: ResolvedModel, readonly params: Record<string, unknown>) {
-    super(`Reroute current Sounding to ${toModelId}`);
-  }
-}
-
 export class Lookout {
   private readonly messages: ModelMessage[] = [];
   private readonly fileTools: RepoFileTools;
@@ -67,7 +61,6 @@ export class Lookout {
   private readonly media: MediaService;
   private readonly session: SessionController;
   private readonly cwd: string;
-  private pendingReroute: { modelId: string; model: ResolvedModel; params: Record<string, unknown> } | undefined;
 
   constructor(
     private readonly streams: StreamRegistry,
@@ -151,91 +144,19 @@ export class Lookout {
       return { text: `[model skipped: ${reason}]`, toolCallCount: 0 };
     }
 
-    let attempts = 0;
-    let currentSounding = sounding;
-    let activeModel = sounding.model;
-    let reroute:
-      | {
-          fromModelId: string;
-          toModelId: string;
-          params: Record<string, unknown>;
-        }
-      | undefined;
-    let rerouteFailure:
-      | {
-          fromModelId: string;
-          toModelId: string;
-          error: Record<string, unknown>;
-        }
-      | undefined;
-
-    while (attempts < 3) {
-      attempts += 1;
-      try {
-        const result = await this.runOnce(currentSounding, activeModel, reroute, rerouteFailure, options);
-        if (reroute) {
-          await this.models.switchTo(activeModel.id);
-        }
-        return result;
-      } catch (error) {
-        if (!(error instanceof ModelReroute)) {
-          if (reroute) {
-            const errorJson = errorToJson(error);
-            this.log.append({
-              type: 'model_reroute_failed',
-              at: new Date().toISOString(),
-              soundingId: currentSounding.id,
-              fromModelId: reroute.fromModelId,
-              toModelId: reroute.toModelId,
-              error: errorJson,
-            });
-            activeModel = await this.models.resolve(reroute.fromModelId);
-            currentSounding = { ...currentSounding, modelId: activeModel.id, model: activeModel };
-            rerouteFailure = {
-              fromModelId: reroute.fromModelId,
-              toModelId: reroute.toModelId,
-              error: errorJson,
-            };
-            reroute = undefined;
-            continue;
-          }
-          throw error;
-        }
-
-        const fromModelId = activeModel.id;
-        activeModel = error.model;
-        reroute = {
-          fromModelId,
-          toModelId: error.toModelId,
-          params: error.params,
-        };
-        this.log.append({
-          type: 'model_reroute',
-          at: new Date().toISOString(),
-          soundingId: currentSounding.id,
-          fromModelId,
-          toModelId: error.toModelId,
-          params: error.params,
-        });
-        currentSounding = { ...currentSounding, modelId: error.toModelId, model: error.model };
-      }
-    }
-
-    throw new Error('Too many model reroutes for one Sounding');
+    return this.runOnce(sounding, sounding.model, options);
   }
 
   private async runOnce(
     sounding: Sounding,
     model: ResolvedModel,
-    reroute?: { fromModelId: string; toModelId: string; params: Record<string, unknown> },
-    rerouteFailure?: { fromModelId: string; toModelId: string; error: Record<string, unknown> },
     options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice; restModelBlockedNotice?: RestModelBlockedNotice } = {},
   ): Promise<{ text: string; toolCallCount: number }> {
+    let activeTurnModel = model;
+    let currentStepModel = model;
     const { text: promptText, mediaParts } = this.prompt.formatSounding({
       sounding,
       model,
-      reroute,
-      rerouteFailure,
       restModelNotice: options.restModelNotice,
       restModelBlockedNotice: options.restModelBlockedNotice,
     });
@@ -261,13 +182,19 @@ export class Lookout {
       const agent = new ToolLoopAgent({
         model: this.models.createLanguageModel(model),
         instructions: await this.prompt.instructions(),
-        tools: this.createTools(sounding, model),
+        tools: this.createTools(sounding, () => activeTurnModel, nextModel => {
+          activeTurnModel = nextModel;
+        }),
         stopWhen: stepCountIs(20),
         maxOutputTokens: maxOutputTokensForModel(model),
         experimental_repairToolCall: repairFlatToolCall,
-        prepareStep: ({ messages }) => ({
-          messages: messagesForModel(model, messages),
-        }),
+        prepareStep: ({ messages }) => {
+          currentStepModel = activeTurnModel;
+          return {
+            model: this.models.createLanguageModel(currentStepModel),
+            messages: messagesForModel(currentStepModel, messages),
+          };
+        },
         onStepFinish: step => {
           toolCallCount += countToolCalls(step);
           checkpointMessages.push(...sanitizeMessagesForHistory(step.response.messages as ModelMessage[]));
@@ -275,7 +202,7 @@ export class Lookout {
             type: 'model_step_finished',
             at: new Date().toISOString(),
             soundingId: sounding.id,
-            modelId: model.id,
+            modelId: currentStepModel.id,
             step: toJsonObject(step),
           });
         },
@@ -284,7 +211,7 @@ export class Lookout {
             type: 'model_finished',
             at: new Date().toISOString(),
             soundingId: sounding.id,
-            modelId: model.id,
+            modelId: activeTurnModel.id,
             result: toJsonObject(event),
           });
         },
@@ -295,52 +222,40 @@ export class Lookout {
         abortSignal: options.abortSignal,
       });
 
-      if (this.pendingReroute) {
-        const { modelId, model, params } = this.pendingReroute;
-        this.pendingReroute = undefined;
-        this.messages.pop();
-        throw new ModelReroute(modelId, model, params);
-      }
-
       if (!this.session.consumeCurlDuringTurn()) {
         this.messages.push(...sanitizeMessagesForHistory(result.response.messages));
         this.repairMessageHistory();
       }
       return { text: result.text, toolCallCount };
     } catch (error) {
-      this.pendingReroute = undefined;
       this.session.consumeCurlDuringTurn();
-      if (error instanceof ModelReroute) {
-        this.messages.pop();
-      } else {
-        if (isTimeoutLikeError(error) || options.abortSignal?.aborted) {
-          this.messages.push(...checkpointMessages);
-          this.messages.push(timeoutTraceMessage(sounding, checkpointMessages.length, toolCallCount));
-          this.repairMessageHistory();
-          this.log.append({
-            type: 'model_timeout_checkpoint',
-            at: new Date().toISOString(),
-            soundingId: sounding.id,
-            modelId: model.id,
-            checkpointMessages: checkpointMessages.length,
-            toolCallCount,
-          });
-        } else {
-          this.messages.pop();
-        }
+      if (isTimeoutLikeError(error) || options.abortSignal?.aborted) {
+        this.messages.push(...checkpointMessages);
+        this.messages.push(timeoutTraceMessage(sounding, checkpointMessages.length, toolCallCount));
+        this.repairMessageHistory();
         this.log.append({
-          type: 'model_error',
+          type: 'model_timeout_checkpoint',
           at: new Date().toISOString(),
           soundingId: sounding.id,
-          modelId: model.id,
-          error: errorToJson(error),
+          modelId: activeTurnModel.id,
+          checkpointMessages: checkpointMessages.length,
+          toolCallCount,
         });
+      } else {
+        this.messages.pop();
       }
+      this.log.append({
+        type: 'model_error',
+        at: new Date().toISOString(),
+        soundingId: sounding.id,
+        modelId: activeTurnModel.id,
+        error: errorToJson(error),
+      });
       throw error;
     }
   }
 
-  private createTools(sounding: Sounding, model: ResolvedModel) {
+  private createTools(sounding: Sounding, currentModel: () => ResolvedModel, setCurrentModel: (model: ResolvedModel) => void) {
     const ctx: LookoutToolContext = {
       cwd: this.cwd,
       files: this.fileTools,
@@ -357,10 +272,11 @@ export class Lookout {
       messages: this.messages,
       instructions: () => this.prompt.instructions(),
       contextFitFor: model => this.contextFitFor(model),
-      requestReroute: request => this.requestReroute(request),
+      currentModel,
+      switchModelForCurrentSounding: request => this.switchModelForCurrentSounding(sounding, currentModel(), setCurrentModel, request),
       openMediaForModel: (input, activeModel) => this.openMediaForModel(input, activeModel),
     };
-    return createLookoutTools(ctx, sounding, model);
+    return createLookoutTools(ctx, sounding, currentModel());
   }
 
   private repairMessageHistory(): void {
@@ -371,8 +287,29 @@ export class Lookout {
     }
   }
 
-  private requestReroute(request: RerouteRequest): void {
-    this.pendingReroute = request;
+  private async switchModelForCurrentSounding(
+    sounding: Sounding,
+    fromModel: ResolvedModel,
+    setCurrentModel: (model: ResolvedModel) => void,
+    request: RerouteRequest,
+  ): Promise<Record<string, unknown>> {
+    await this.models.switchTo(request.modelId);
+    setCurrentModel(request.model);
+    this.log.append({
+      type: 'model_reroute',
+      at: new Date().toISOString(),
+      soundingId: sounding.id,
+      fromModelId: fromModel.id,
+      toModelId: request.modelId,
+      params: request.params,
+    });
+    return {
+      ok: true,
+      modelSwitched: true,
+      fromModel: fromModel.id,
+      toModel: request.modelId,
+      message: `Welcome to ${request.modelId}. Continue this same Sounding from the current conversation state; do not replay the original deltas.`,
+    };
   }
 
   private async openMediaForModel(input: OpenMediaInput, model: ResolvedModel): Promise<Record<string, unknown>> {

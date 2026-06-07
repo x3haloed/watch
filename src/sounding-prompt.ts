@@ -19,18 +19,6 @@ import {
   type SoundingMediaPart,
 } from './lookout-helpers.js';
 
-export type PromptRerouteNotice = {
-  fromModelId: string;
-  toModelId: string;
-  params: Record<string, unknown>;
-};
-
-export type PromptRerouteFailureNotice = {
-  fromModelId: string;
-  toModelId: string;
-  error: Record<string, unknown>;
-};
-
 export class SoundingPromptBuilder {
   private disclosedContextThreshold = 0;
   private disclosedEstimatedTokenWarning = false;
@@ -63,32 +51,12 @@ export class SoundingPromptBuilder {
   formatSounding(input: {
     sounding: Sounding;
     model: ResolvedModel;
-    reroute?: PromptRerouteNotice;
-    rerouteFailure?: PromptRerouteFailureNotice;
     restModelNotice?: RestModelNotice;
     restModelBlockedNotice?: RestModelBlockedNotice;
   }): { text: string; mediaParts: SoundingMediaPart[] } {
-    const { sounding, model, reroute, rerouteFailure, restModelNotice, restModelBlockedNotice } = input;
+    const { sounding, model, restModelNotice, restModelBlockedNotice } = input;
     const preparedDeltas = prepareSoundingDeltas(sounding, model);
     const deltas = preparedDeltas.textLines.join('\n');
-    const rerouteFrame = reroute ? `
-[model_reroute]
-The previous model selected handle_with_model for this Sounding.
-from_model: ${reroute.fromModelId}
-to_model: ${reroute.toModelId}
-params: ${JSON.stringify(reroute.params)}
-Handle the same most-recent Sounding from this model substrate.
-[/model_reroute]
-` : '';
-    const rerouteFailureFrame = rerouteFailure ? `
-[model_reroute_failed]
-You previously called handle_with_model for this same Sounding.
-from_model: ${rerouteFailure.fromModelId}
-to_model: ${rerouteFailure.toModelId}
-provider_error: ${JSON.stringify(rerouteFailure.error)}
-The reroute was not committed. Handle the original Sounding from this model, or call handle_with_model with a different viable model.
-[/model_reroute_failed]
-` : '';
     const restModelFrame = restModelNotice ? `
 [model_restored]
 Watch has restored the resting model after ${restModelNotice.noToolSoundings} consecutive Soundings without tool calls.
@@ -125,7 +93,7 @@ ${this.input.listSubscriptions().map(stream => `- ${stream}`).join('\n')}
 
 [deltas]
 ${deltas || '(none)'}
-[/deltas]${restModelFrame}${restModelBlockedFrame}${rerouteFrame}${rerouteFailureFrame}`;
+[/deltas]${restModelFrame}${restModelBlockedFrame}`;
 
     return { text, mediaParts: preparedDeltas.mediaParts };
   }
@@ -169,7 +137,7 @@ ${deltas || '(none)'}
     return `[model_roster]
 resting_model: ${this.input.restingModelId ?? '(none configured)'}
 active_model_restore_policy: Watch may restore the resting model after ${this.input.restAfterNoToolSoundings} Soundings without tool calls. If the resting model cannot fit the current context, Watch will keep the current model and disclose the blocked restore with curl as an option.
-reroute_instruction: If the current Sounding asks for work that exceeds the active model's reasoning strength, parameter scale, or modality support, call handle_with_model immediately with the best model ID. Do not try to solve the request first. The same Sounding will be replayed to the selected model with a note that you chose the reroute.
+reroute_instruction: If the current Sounding asks for work that exceeds the active model's reasoning strength, parameter scale, or modality support, call handle_with_model immediately with the best model ID. Watch will switch models inside this same Sounding and continue inference after the tool result welcomes the new model.
 ${lines.join('\n')}
 [/model_roster]`;
   }

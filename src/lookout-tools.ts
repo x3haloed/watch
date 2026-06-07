@@ -12,7 +12,7 @@ import { createTerminalTools } from './tools/terminal.js';
 
 export function createLookoutTools(ctx: LookoutToolContext, sounding: Sounding, model: ResolvedModel): ToolSet {
   return {
-    ...createFileTools(ctx, model),
+    ...createFileTools(ctx),
     ...createSessionTools(ctx, sounding),
     ...createSkillTools(ctx),
     ...createTerminalTools(ctx, sounding),

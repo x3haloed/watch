@@ -49,17 +49,14 @@ test('formats a basic Sounding prompt with model and stream context', () => {
   assert.match(result.text, /inbox:/);
 });
 
-test('includes reroute and rest-model notices deterministically', () => {
+test('includes rest-model notices deterministically', () => {
   const builder = promptBuilder([]);
   const result = builder.formatSounding({
     sounding,
     model,
-    reroute: { fromModelId: 'small', toModelId: 'large', params: { modelId: 'large' } },
     restModelNotice: { fromModelId: 'large', toModelId: 'small', noToolSoundings: 3 },
   });
 
-  assert.match(result.text, /\[model_reroute\]/);
-  assert.match(result.text, /from_model: small/);
   assert.match(result.text, /\[model_restored\]/);
   assert.match(result.text, /after 3 consecutive Soundings/);
 });

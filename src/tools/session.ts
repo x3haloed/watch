@@ -59,7 +59,7 @@ export function createSessionTools(ctx: LookoutToolContext, sounding: Sounding) 
     }),
     handle_with_model: tool({
       description:
-        'Provisionally rerun the current Sounding on another model. Watch commits the new active model only if that model completes the Sounding successfully.',
+        'Switch the current Sounding to another model immediately. The next inference step continues on that model from the current tool result, without replaying the Sounding.',
       inputSchema: jsonSchema<{ modelId: string }>({
         type: 'object',
         properties: {
@@ -97,8 +97,7 @@ export function createSessionTools(ctx: LookoutToolContext, sounding: Sounding) 
         } catch (error) {
           return { ok: false, error: error instanceof Error ? error.message : String(error) };
         }
-        ctx.requestReroute({ modelId, model, params: { modelId } });
-        return { ok: true, rerouteRequested: true, toModel: modelId };
+        return ctx.switchModelForCurrentSounding({ modelId, model, params: { modelId } });
       },
     }),
     session_dashboard: tool({

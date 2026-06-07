@@ -1,9 +1,8 @@
 import { jsonSchema, tool } from 'ai';
-import type { ResolvedModel } from '../types.js';
 import { mediaToolOutputToModelOutput } from '../lookout-helpers.js';
 import type { LookoutToolContext } from './context.js';
 
-export function createFileTools(ctx: LookoutToolContext, model: ResolvedModel) {
+export function createFileTools(ctx: LookoutToolContext) {
   return {
     read_file: tool({
       description: 'Read a UTF-8 text file with line numbers and pagination. If the path is media, this returns instructions to use open_media instead. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected.',
@@ -34,7 +33,7 @@ export function createFileTools(ctx: LookoutToolContext, model: ResolvedModel) {
         },
         additionalProperties: false,
       }),
-      execute: async input => ctx.openMediaForModel(input, model),
+      execute: async input => ctx.openMediaForModel(input, ctx.currentModel()),
       toModelOutput: (options: { output: unknown }) => mediaToolOutputToModelOutput(options.output) as never,
     }),
     write_file: tool({

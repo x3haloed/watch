@@ -35,6 +35,7 @@ export interface LookoutToolContext {
   messages: ModelMessage[];
   instructions: () => Promise<string>;
   contextFitFor: (model: ResolvedModel) => Promise<ContextFit>;
-  requestReroute: (request: RerouteRequest) => void;
+  currentModel: () => ResolvedModel;
+  switchModelForCurrentSounding: (request: RerouteRequest) => Promise<Record<string, unknown>>;
   openMediaForModel: (input: OpenMediaInput, model: ResolvedModel) => Promise<Record<string, unknown>>;
 }
