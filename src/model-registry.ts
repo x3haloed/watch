@@ -303,7 +303,7 @@ function transformOpenRouterMessage(message: unknown): unknown {
     if (!video) return [part];
     return [
       ...(video.text ? [{ type: 'text', text: video.text }] : []),
-      { type: 'video_url', videoUrl: { url: video.url } },
+      { type: 'video_url', video_url: { url: video.url } },
     ];
   });
 
