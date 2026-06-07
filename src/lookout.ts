@@ -1,5 +1,5 @@
 import { ToolLoopAgent, jsonSchema, stepCountIs, tool, type ToolCallRepairFunction, type ToolSet } from 'ai';
-import type { ModelMessage } from 'ai';
+import type { FilePart, ImagePart, ModelMessage, TextPart } from 'ai';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { ModelCapabilities, ResolvedModel, Sounding } from './types.js';
@@ -1409,7 +1409,132 @@ function sanitizeMessagesForHistory(messages: ModelMessage[]): ModelMessage[] {
 }
 
 export function messagesForModel(model: ResolvedModel, messages: ModelMessage[]): ModelMessage[] {
-  return replaceUnsupportedMediaForModel(JSON.parse(JSON.stringify(messages)), model) as ModelMessage[];
+  const cloned = JSON.parse(JSON.stringify(messages)) as ModelMessage[];
+  const supported = replaceUnsupportedMediaForModel(cloned, model) as ModelMessage[];
+  return usesOpenAICompatibleChatProvider(model) ? moveToolResultMediaToUserMessages(supported) : supported;
+}
+
+function usesOpenAICompatibleChatProvider(model: ResolvedModel): boolean {
+  return model.provider === 'openai-compatible' || model.provider === 'openrouter';
+}
+
+function moveToolResultMediaToUserMessages(messages: ModelMessage[]): ModelMessage[] {
+  const moved: ModelMessage[] = [];
+  for (const message of messages) {
+    const content = (message as { content?: unknown }).content;
+    if (message.role !== 'tool' || !Array.isArray(content)) {
+      moved.push(message);
+      continue;
+    }
+
+    const followUpMessages: ModelMessage[] = [];
+    const transformedContent = content.map(part => {
+      const record = isRecord(part) ? part : undefined;
+      if (!record || record.type !== 'tool-result' || !isRecord(record.output)) {
+        return part;
+      }
+
+      const mediaParts = mediaUserContentPartsFromToolOutput(record.output);
+      if (mediaParts.length === 0) {
+        return part;
+      }
+
+      const toolName = typeof record.toolName === 'string' ? record.toolName : 'tool';
+      const toolCallId = typeof record.toolCallId === 'string' ? record.toolCallId : 'unknown';
+      const summary = textSummaryFromToolOutput(record.output);
+
+      followUpMessages.push(
+        { role: 'assistant', content: '[awaiting media open result]' } as ModelMessage,
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: [
+                `Media requested by tool call ${toolCallId} (${toolName}) is attached here.`,
+                summary ? `Tool result summary: ${summary}` : undefined,
+              ].filter(Boolean).join('\n'),
+            } satisfies TextPart,
+            ...mediaParts,
+          ],
+        } as ModelMessage,
+      );
+
+      // The OpenAI-compatible chat provider serializes tool-result `content`
+      // outputs with JSON.stringify(), so image/file content parts become opaque
+      // text instead of real multimodal input. Keep the tool-call/result protocol
+      // satisfied with a text result, then append the media as a user message,
+      // where the provider already converts image/file parts correctly.
+      return {
+        ...record,
+        output: {
+          type: 'json',
+          value: {
+            ok: true,
+            mediaAttachedInFollowingUserMessage: true,
+            result: summary || 'Tool call succeeded. The requested media is attached in the following user message.',
+          },
+        },
+      };
+    });
+
+    moved.push({ ...message, content: transformedContent } as ModelMessage, ...followUpMessages);
+  }
+  return moved;
+}
+
+function mediaUserContentPartsFromToolOutput(output: Record<string, unknown>): Array<ImagePart | FilePart> {
+  if (output.type !== 'content' || !Array.isArray(output.value)) {
+    return [];
+  }
+
+  const parts: Array<ImagePart | FilePart> = [];
+  for (const item of output.value) {
+    if (!isRecord(item)) continue;
+    const mediaType = typeof item.mediaType === 'string' ? item.mediaType : undefined;
+    if (!mediaType) continue;
+
+    if ((item.type === 'media' || item.type === 'image-data') && typeof item.data === 'string' && mediaType.startsWith('image/')) {
+      parts.push({ type: 'image', image: item.data, mediaType });
+      continue;
+    }
+
+    if ((item.type === 'media' || item.type === 'file-data') && typeof item.data === 'string') {
+      parts.push({
+        type: 'file',
+        data: item.data,
+        mediaType,
+        ...(typeof item.filename === 'string' ? { filename: item.filename } : {}),
+      });
+      continue;
+    }
+
+    if (item.type === 'image-url' && typeof item.url === 'string') {
+      parts.push({ type: 'image', image: new URL(item.url), mediaType });
+      continue;
+    }
+
+    if (item.type === 'file-url' && typeof item.url === 'string') {
+      parts.push({ type: 'file', data: new URL(item.url), mediaType });
+      continue;
+    }
+  }
+  return parts;
+}
+
+function textSummaryFromToolOutput(output: Record<string, unknown>): string | undefined {
+  if (output.type === 'text' || output.type === 'error-text') {
+    return typeof output.value === 'string' ? output.value : undefined;
+  }
+  if (output.type !== 'content' || !Array.isArray(output.value)) {
+    return undefined;
+  }
+  const text = output.value
+    .filter(item => isRecord(item) && item.type === 'text' && typeof item.text === 'string')
+    .map(item => (item as { text: string }).text.trim())
+    .filter(Boolean)
+    .join('\n');
+  return text || undefined;
 }
 
 function replaceUnsupportedMediaForModel(value: unknown, model: ResolvedModel): unknown {
