@@ -484,7 +484,7 @@ function commonSuffixLength(a: string[], b: string[]): number {
 }
 
 function deliveryModeFor(stream: string, capabilities: ModelCapabilities): string {
-  if (stream === 'video' || stream.startsWith('video:') || stream.startsWith('camera:')) {
+  if (stream === 'video' || stream.startsWith('video:') || stream.startsWith('camera:') || stream.startsWith('desktop:')) {
     if (capabilities.video) return 'video';
     if (capabilities.images) return 'sampled-frames';
     return 'metadata-only';

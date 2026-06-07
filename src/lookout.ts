@@ -11,10 +11,8 @@ import { TerminalTools } from './terminal-tools.js';
 import { DiscordBridge } from './discord.js';
 import { Scratchpad } from './scratchpad.js';
 import {
-  contextFitForModel,
   countToolCalls,
   errorToJson,
-  estimateTokensRough,
   isTimeoutLikeError,
   maxOutputTokensForModel,
   messagesForModel,
@@ -30,6 +28,7 @@ import { MediaService, type OpenMediaInput } from './media-service.js';
 import { SessionController, type CurlResult, type RebootRequest } from './session-controller.js';
 import { SoundingPromptBuilder } from './sounding-prompt.js';
 import type { LookoutToolContext, RerouteRequest } from './tools/context.js';
+import { ContextTokenTracker } from './token-estimator.js';
 
 
 export type RestModelNotice = {
@@ -60,6 +59,7 @@ export class Lookout {
   private readonly prompt: SoundingPromptBuilder;
   private readonly media: MediaService;
   private readonly session: SessionController;
+  private readonly tokenTracker = new ContextTokenTracker();
   private readonly cwd: string;
 
   constructor(
@@ -90,6 +90,7 @@ export class Lookout {
       restingModelId,
       restAfterNoToolSoundings,
       estimatedTokenWarningThreshold,
+      tokenTracker: this.tokenTracker,
       scratchpad,
     });
     this.session = new SessionController({
@@ -108,12 +109,7 @@ export class Lookout {
 
   async contextFitFor(model: ResolvedModel): Promise<ContextFit> {
     const instructions = await this.prompt.instructions();
-    return contextFitForModel(model, estimateTokensRough(
-      JSON.stringify({
-        instructions,
-        messages: this.messages,
-      }),
-    ));
+    return this.tokenTracker.contextFitFor(model, this.tokenTracker.estimatePrompt({ instructions, messages: this.messages }));
   }
 
   async curlFromSystem(soundingId: string, ledgerEntry?: string): Promise<CurlResult> {
@@ -198,6 +194,7 @@ export class Lookout {
         onStepFinish: step => {
           toolCallCount += countToolCalls(step);
           checkpointMessages.push(...sanitizeMessagesForHistory(step.response.messages as ModelMessage[]));
+          this.tokenTracker.recordProviderInput(step.usage.inputTokens, this.messages);
           this.log.append({
             type: 'model_step_finished',
             at: new Date().toISOString(),

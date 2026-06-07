@@ -1,6 +1,6 @@
 import { jsonSchema, tool } from 'ai';
 import type { ResolvedModel, Sounding } from '../types.js';
-import { contextFitForModel, estimateTokensRough } from '../lookout-helpers.js';
+import { estimateModelValue, estimateTextTokens } from '../token-estimator.js';
 import type { LookoutToolContext } from './context.js';
 
 export function createSessionTools(ctx: LookoutToolContext, sounding: Sounding) {
@@ -116,12 +116,11 @@ export function createSessionTools(ctx: LookoutToolContext, sounding: Sounding) 
         ]);
         return {
           ok: true,
-          context: contextFitForModel(activeModel, estimateTokensRough(
-            JSON.stringify({
-              instructions,
-              messages: ctx.messages,
-            }),
-          )),
+          context: await ctx.contextFitFor(activeModel),
+          estimatedBreakdown: {
+            instructionsTokens: estimateTextTokens(instructions),
+            messageTokens: estimateModelValue(ctx.messages).tokens,
+          },
           model: {
             current: activeModel.id,
             allAvailable,

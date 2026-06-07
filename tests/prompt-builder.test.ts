@@ -5,6 +5,7 @@ import { SoundingPromptBuilder } from '../src/sounding-prompt.js';
 import type { ModelRegistry } from '../src/model-registry.js';
 import type { SkillLibrary } from '../src/skills.js';
 import type { ResolvedModel, Sounding } from '../src/types.js';
+import { ContextTokenTracker } from '../src/token-estimator.js';
 
 const model: ResolvedModel = {
   id: 'test:model',
@@ -108,5 +109,6 @@ function promptBuilder(messages: ModelMessage[]): SoundingPromptBuilder {
     restingModelId: model.id,
     restAfterNoToolSoundings: 3,
     estimatedTokenWarningThreshold: 1000,
+    tokenTracker: new ContextTokenTracker(),
   });
 }

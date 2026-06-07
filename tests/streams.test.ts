@@ -29,6 +29,18 @@ test('subscribes buffered streams and pops pending deltas', async () => {
   assert.equal(registry.hasPending(new Date('2026-06-07T00:00:01.000Z')), true);
 });
 
+test('desktop capture uses video-style delivery labels', async () => {
+  const registry = new StreamRegistry([], process.cwd());
+  registry.registerBufferedStream('desktop:capture', { subscribed: true });
+  registry.push('desktop:capture', { mediaType: 'video/mp4', dataBase64: 'aaaa' });
+
+  const deltas = await registry.popDeltas({ now: new Date('2026-06-07T00:00:00.000Z'), capabilities });
+  const desktop = deltas.find(delta => delta.stream === 'desktop:capture');
+
+  assert.equal(desktop?.payload.delivery, 'video');
+});
+
+
 test('text file streams are removed from gaze after EOF', async () => {
   const root = await mkdtemp(join(tmpdir(), 'watch-streams-'));
   await writeFile(join(root, 'note.txt'), 'hello', 'utf8');

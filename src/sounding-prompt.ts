@@ -6,10 +6,8 @@ import type { ResolvedModel, Sounding } from './types.js';
 import type { RestModelBlockedNotice, RestModelNotice } from './lookout.js';
 import { LOOKOUT_INSTRUCTIONS } from './lookout-instructions.js';
 import {
-  contextFitForModel,
   crossedContextThreshold,
   defaultUseFor,
-  estimateTokensRough,
   formatCapabilities,
   formatPercent,
   highestContextThresholdAtOrBelow,
@@ -18,6 +16,7 @@ import {
   validEstimatedTokenWarningThreshold,
   type SoundingMediaPart,
 } from './lookout-helpers.js';
+import type { ContextTokenTracker } from './token-estimator.js';
 
 export class SoundingPromptBuilder {
   private disclosedContextThreshold = 0;
@@ -34,6 +33,7 @@ export class SoundingPromptBuilder {
       restingModelId?: string;
       restAfterNoToolSoundings: number;
       estimatedTokenWarningThreshold: number;
+      tokenTracker: ContextTokenTracker;
       scratchpad?: Scratchpad;
     },
   ) {}
@@ -161,7 +161,11 @@ ${lines.join('\n')}
   }
 
   private contextDisclosureFrame(model: ResolvedModel, sounding: Sounding): string {
-    const fit = contextFitForModel(model, estimateTokensRough(JSON.stringify({ messages: this.input.messages, prompt: sounding })));
+    const fit = this.input.tokenTracker.contextFitFor(model, this.input.tokenTracker.estimatePrompt({
+      instructions: '',
+      messages: this.input.messages,
+      sounding,
+    }));
     const crossed = crossedContextThreshold(fit.ratio, this.disclosedContextThreshold);
     if (fit.ratio !== null && fit.ratio < this.disclosedContextThreshold) {
       this.disclosedContextThreshold = highestContextThresholdAtOrBelow(fit.ratio);
@@ -189,7 +193,11 @@ curl_available: Call curl with a ledgerEntry to preserve what matters and clear 
     if (threshold === undefined || this.disclosedEstimatedTokenWarning) {
       return '';
     }
-    const fit = contextFitForModel(model, estimateTokensRough(JSON.stringify({ messages: this.input.messages, prompt: sounding })));
+    const fit = this.input.tokenTracker.contextFitFor(model, this.input.tokenTracker.estimatePrompt({
+      instructions: '',
+      messages: this.input.messages,
+      sounding,
+    }));
     if (fit.usedTokensEstimate < threshold) {
       return '';
     }
