@@ -273,6 +273,9 @@ export class Lookout {
         stopWhen: stepCountIs(20),
         maxOutputTokens: maxOutputTokensForModel(model),
         experimental_repairToolCall: repairFlatToolCall,
+        prepareStep: ({ messages }) => ({
+          messages: messagesForModel(model, messages),
+        }),
         onStepFinish: step => {
           toolCallCount += countToolCalls(step);
           checkpointMessages.push(...sanitizeMessagesForHistory(step.response.messages as ModelMessage[]));
