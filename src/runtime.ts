@@ -97,6 +97,7 @@ export class WatchRuntime {
     if (this.clockTimer) clearInterval(this.clockTimer);
     this.soundQueued = false;
     this.activeAbortController?.abort(reason);
+    this.lookout.stopTerminalSessions(reason);
     for (const bridge of this.cameraStreams) {
       bridge.stop(reason);
     }

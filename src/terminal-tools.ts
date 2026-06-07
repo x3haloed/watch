@@ -93,6 +93,7 @@ export class TerminalTools {
     const action = input.action ?? (input.input ? 'write' : 'poll');
     if (action === 'kill') {
       killProcess(session.process);
+      this.sessions.delete(session.id);
       this.log.append({ type: 'terminal_killed', at: new Date().toISOString(), soundingId, sessionId: session.id });
       return { ok: true, status: 'killed', sessionId: session.id };
     }
@@ -117,6 +118,22 @@ export class TerminalTools {
       output: truncate(cleanTerminalText(session.output), maxOutputChars),
       hint: session.exited ? undefined : 'Call terminal_input again to poll, write more input, or kill the process.',
     };
+  }
+
+  killAll(soundingId: string, reason: string): number {
+    const liveSessions = [...this.sessions.values()].filter(session => !session.exited);
+    for (const session of liveSessions) {
+      killProcess(session.process);
+      this.log.append({
+        type: 'terminal_killed',
+        at: new Date().toISOString(),
+        soundingId,
+        sessionId: session.id,
+        reason,
+      });
+    }
+    this.sessions.clear();
+    return liveSessions.length;
   }
 
   private spawnSession(soundingId: string, command: string, cwd: string, background: boolean, pty: boolean): TerminalSession {
@@ -153,6 +170,7 @@ export class TerminalTools {
     session.process.on('exit', exitCode => {
       session.exited = true;
       session.exitCode = exitCode;
+      this.sessions.delete(session.id);
       this.log.append({
         type: 'terminal_finished',
         at: new Date().toISOString(),
@@ -165,6 +183,7 @@ export class TerminalTools {
     });
     session.process.on('error', error => {
       session.exited = true;
+      this.sessions.delete(session.id);
       this.log.append({
         type: 'terminal_finished',
         at: new Date().toISOString(),

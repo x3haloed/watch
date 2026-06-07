@@ -120,6 +120,10 @@ export class Lookout {
     return this.curlSession(soundingId, ledgerEntry);
   }
 
+  stopTerminalSessions(reason: string): number {
+    return this.terminalTools.killAll('runtime:stop', reason);
+  }
+
   consumeRebootRequest(): RebootRequest | undefined {
     const request = this.pendingReboot;
     this.pendingReboot = undefined;
@@ -222,9 +226,13 @@ export class Lookout {
     rerouteFailure?: { fromModelId: string; toModelId: string; error: Record<string, unknown> },
     options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice; restModelBlockedNotice?: RestModelBlockedNotice } = {},
   ): Promise<{ text: string; toolCallCount: number }> {
-    const prompt = this.formatSounding(sounding, model, reroute, rerouteFailure, options.restModelNotice, options.restModelBlockedNotice);
+    const { text: promptText, mediaParts } = this.formatSounding(sounding, model, reroute, rerouteFailure, options.restModelNotice, options.restModelBlockedNotice);
     this.repairMessageHistory();
-    this.messages.push({ role: 'user', content: prompt });
+    // Build content as array when camera media is present, string otherwise
+    const content = mediaParts.length > 0
+      ? [{ type: 'text' as const, text: promptText }, ...mediaParts.map(m => ({ type: 'image' as const, image: m.image, mediaType: m.mediaType }))]
+      : promptText;
+    this.messages.push({ role: 'user', content });
     let toolCallCount = 0;
     const checkpointMessages: ModelMessage[] = [];
 
@@ -1154,10 +1162,38 @@ ${lines.join('\n')}
     rerouteFailure?: { fromModelId: string; toModelId: string; error: Record<string, unknown> },
     restModelNotice?: RestModelNotice,
     restModelBlockedNotice?: RestModelBlockedNotice,
-  ): string {
-    const deltas = sounding.deltas
-      .map(delta => `${delta.stream}: ${JSON.stringify(delta.payload)} @ ${delta.at}`)
-      .join('\n');
+  ): { text: string; mediaParts: Array<{ type: 'image'; image: string; mediaType: string }> } {
+    // Extract camera media from deltas before serializing to text
+    const mediaParts: Array<{ type: 'image'; image: string; mediaType: string }> = [];
+    const textDeltas: string[] = [];
+
+    for (const delta of sounding.deltas) {
+      const payload = delta.payload as Record<string, unknown>;
+      // Camera chunks have dataBase64 + mediaType at the top level
+      if (typeof payload.dataBase64 === 'string' && typeof payload.mediaType === 'string') {
+        mediaParts.push({ type: 'image', image: payload.dataBase64, mediaType: payload.mediaType });
+        const { dataBase64: _d, payload: _p, ...meta } = payload;
+        textDeltas.push(`${delta.stream}: ${JSON.stringify(meta)} @ ${delta.at}`);
+      } else if (Array.isArray(payload.items)) {
+        // BufferedStream format: { count, delivery, items: [...] }
+        const keptItems: unknown[] = [];
+        for (const item of payload.items) {
+          const it = item as Record<string, unknown>;
+          if (typeof it.dataBase64 === 'string' && typeof it.mediaType === 'string') {
+            mediaParts.push({ type: 'image', image: it.dataBase64, mediaType: it.mediaType });
+            const { dataBase64: _d, ...meta } = it;
+            keptItems.push(meta);
+          } else {
+            keptItems.push(item);
+          }
+        }
+        textDeltas.push(`${delta.stream}: ${JSON.stringify({ ...payload, items: keptItems })} @ ${delta.at}`);
+      } else {
+        textDeltas.push(`${delta.stream}: ${JSON.stringify(delta.payload)} @ ${delta.at}`);
+      }
+    }
+
+    const deltas = textDeltas.join('\n');
     const rerouteFrame = reroute
       ? `
 [model_reroute]
@@ -1205,7 +1241,7 @@ This is a disclosure, not a punishment. You can continue on the current model, c
     const contextPressureFrame = this.contextDisclosureFrame(model, sounding);
     const estimatedTokenWarningFrame = this.estimatedTokenWarningFrame(model, sounding);
 
-    return `[cff_system]
+    const text = `[cff_system]
 sounding_id: ${sounding.id}
 last_flicker_ms: ${sounding.lastFlickerMs}
 trigger: ${sounding.trigger}
@@ -1223,6 +1259,8 @@ ${this.streams.listSubscriptions().map(stream => `- ${stream}`).join('\n')}
 [deltas]
 ${deltas || '(none)'}
 [/deltas]${restModelFrame}${restModelBlockedFrame}${rerouteFrame}${rerouteFailureFrame}`;
+
+    return { text, mediaParts };
   }
 
   private contextDisclosureFrame(model: ResolvedModel, sounding: Sounding): string {
