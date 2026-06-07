@@ -34,6 +34,8 @@ const MEDIA_TYPES_BY_EXTENSION: Record<string, string> = {
   '.mov': 'video/quicktime',
   '.mp3': 'audio/mpeg',
   '.mp4': 'video/mp4',
+  '.mpeg': 'video/mpeg',
+  '.mpg': 'video/mpeg',
   '.oga': 'audio/ogg',
   '.ogg': 'audio/ogg',
   '.pdf': 'application/pdf',

@@ -24,6 +24,7 @@ import {
 } from './media.js';
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+const WATCH_OPENROUTER_VIDEO_SENTINEL = '__watch_openrouter_video__:';
 
 export type RestModelNotice = {
   fromModelId: string;
@@ -1426,7 +1427,7 @@ function sanitizeMessagesForHistory(messages: ModelMessage[]): ModelMessage[] {
 export function messagesForModel(model: ResolvedModel, messages: ModelMessage[]): ModelMessage[] {
   const cloned = JSON.parse(JSON.stringify(messages)) as ModelMessage[];
   const supported = replaceUnsupportedMediaForModel(cloned, model) as ModelMessage[];
-  return usesOpenAICompatibleChatProvider(model) ? moveToolResultMediaToUserMessages(supported) : supported;
+  return usesOpenAICompatibleChatProvider(model) ? moveToolResultMediaToUserMessages(supported, model) : supported;
 }
 
 function usesOpenAICompatibleChatProvider(model: ResolvedModel): boolean {
@@ -1455,6 +1456,9 @@ function promptMediaSupportForModel(model: ResolvedModel, mediaType: string): { 
   if (!usesOpenAICompatibleChatProvider(model)) {
     return { ok: true };
   }
+  if (model.provider === 'openrouter' && openRouterVideoMediaType(normalized)) {
+    return { ok: true };
+  }
   if (normalized.startsWith('image/')) {
     return { ok: true };
   }
@@ -1469,11 +1473,11 @@ function promptMediaSupportForModel(model: ResolvedModel, mediaType: string): { 
   }
   return {
     ok: false,
-    reason: `The OpenAI-compatible provider cannot serialize ${mediaType} as model input. It currently supports images, WAV/MP3 audio, PDFs, and text files.`,
+    reason: `The OpenAI-compatible provider cannot serialize ${mediaType} as model input. It currently supports images, WAV/MP3 audio, PDFs, and text files; OpenRouter also supports MP4/MPEG/MOV/WebM video.`,
   };
 }
 
-function moveToolResultMediaToUserMessages(messages: ModelMessage[]): ModelMessage[] {
+function moveToolResultMediaToUserMessages(messages: ModelMessage[], model: ResolvedModel): ModelMessage[] {
   const moved: ModelMessage[] = [];
   for (const message of messages) {
     const content = (message as { content?: unknown }).content;
@@ -1489,7 +1493,7 @@ function moveToolResultMediaToUserMessages(messages: ModelMessage[]): ModelMessa
         return part;
       }
 
-      const mediaParts = mediaUserContentPartsFromToolOutput(record.output);
+      const mediaParts = mediaUserContentPartsFromToolOutput(record.output, model);
       if (mediaParts.length === 0) {
         return part;
       }
@@ -1538,12 +1542,12 @@ function moveToolResultMediaToUserMessages(messages: ModelMessage[]): ModelMessa
   return moved;
 }
 
-function mediaUserContentPartsFromToolOutput(output: Record<string, unknown>): Array<ImagePart | FilePart> {
+function mediaUserContentPartsFromToolOutput(output: Record<string, unknown>, model: ResolvedModel): Array<ImagePart | FilePart | TextPart> {
   if (output.type !== 'content' || !Array.isArray(output.value)) {
     return [];
   }
 
-  const parts: Array<ImagePart | FilePart> = [];
+  const parts: Array<ImagePart | FilePart | TextPart> = [];
   for (const item of output.value) {
     if (!isRecord(item)) continue;
     const mediaType = typeof item.mediaType === 'string' ? item.mediaType : undefined;
@@ -1555,6 +1559,11 @@ function mediaUserContentPartsFromToolOutput(output: Record<string, unknown>): A
     }
 
     if ((item.type === 'media' || item.type === 'file-data') && typeof item.data === 'string') {
+      const openRouterVideoType = model.provider === 'openrouter' ? openRouterVideoMediaType(mediaType) : undefined;
+      if (openRouterVideoType) {
+        parts.push(openRouterVideoTextPart(item.data, openRouterVideoType));
+        continue;
+      }
       parts.push({
         type: 'file',
         data: item.data,
@@ -1570,11 +1579,35 @@ function mediaUserContentPartsFromToolOutput(output: Record<string, unknown>): A
     }
 
     if (item.type === 'file-url' && typeof item.url === 'string') {
+      const openRouterVideoType = model.provider === 'openrouter' ? openRouterVideoMediaType(mediaType) : undefined;
+      if (openRouterVideoType) {
+        parts.push(openRouterVideoTextPart(item.url, openRouterVideoType));
+        continue;
+      }
       parts.push({ type: 'file', data: new URL(item.url), mediaType });
       continue;
     }
   }
   return parts;
+}
+
+function openRouterVideoMediaType(mediaType: string): string | undefined {
+  const normalized = mediaType.toLowerCase().split(';')[0]?.trim() ?? '';
+  if (normalized === 'video/mp4') return 'video/mp4';
+  if (normalized === 'video/mpeg') return 'video/mpeg';
+  if (normalized === 'video/mov' || normalized === 'video/quicktime') return 'video/mov';
+  if (normalized === 'video/webm') return 'video/webm';
+  return undefined;
+}
+
+function openRouterVideoTextPart(dataOrUrl: string, mediaType: string): TextPart {
+  const url = dataOrUrl.startsWith('http') || dataOrUrl.startsWith('data:')
+    ? dataOrUrl
+    : `data:${mediaType};base64,${dataOrUrl}`;
+  return {
+    type: 'text',
+    text: `${WATCH_OPENROUTER_VIDEO_SENTINEL}${JSON.stringify({ url })}`,
+  };
 }
 
 function textSummaryFromToolOutput(output: Record<string, unknown>): string | undefined {

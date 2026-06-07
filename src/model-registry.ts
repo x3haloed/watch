@@ -149,6 +149,7 @@ export class ModelRegistry {
         name: 'openrouter',
         baseURL: model.baseURL ?? 'https://openrouter.ai/api/v1',
         apiKey: readApiKey(model.apiKeyEnv ?? 'OPENROUTER_API_KEY'),
+        transformRequestBody: transformOpenRouterRequestBody,
       })(model.model) as LanguageModel;
     }
 
@@ -275,6 +276,49 @@ export class ModelRegistry {
       }, null, 2)}\n`,
       'utf8',
     );
+  }
+}
+
+const WATCH_OPENROUTER_VIDEO_SENTINEL = '__watch_openrouter_video__:';
+
+function transformOpenRouterRequestBody(args: Record<string, any>): Record<string, any> {
+  return {
+    ...args,
+    messages: Array.isArray(args.messages)
+      ? args.messages.map(transformOpenRouterMessage)
+      : args.messages,
+  };
+}
+
+function transformOpenRouterMessage(message: unknown): unknown {
+  if (!message || typeof message !== 'object') return message;
+  const record = message as Record<string, any>;
+  if (!Array.isArray(record.content)) return message;
+
+  const content = record.content.flatMap((part: unknown) => {
+    if (!part || typeof part !== 'object') return [part];
+    const partRecord = part as Record<string, any>;
+    if (partRecord.type !== 'text' || typeof partRecord.text !== 'string') return [part];
+    const video = parseOpenRouterVideoSentinel(partRecord.text);
+    if (!video) return [part];
+    return [
+      ...(video.text ? [{ type: 'text', text: video.text }] : []),
+      { type: 'video_url', videoUrl: { url: video.url } },
+    ];
+  });
+
+  return { ...record, content };
+}
+
+function parseOpenRouterVideoSentinel(text: string): { url: string; text?: string } | undefined {
+  if (!text.startsWith(WATCH_OPENROUTER_VIDEO_SENTINEL)) return undefined;
+  try {
+    const parsed = JSON.parse(text.slice(WATCH_OPENROUTER_VIDEO_SENTINEL.length)) as { url?: unknown; text?: unknown };
+    return typeof parsed.url === 'string'
+      ? { url: parsed.url, text: typeof parsed.text === 'string' ? parsed.text : undefined }
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 
