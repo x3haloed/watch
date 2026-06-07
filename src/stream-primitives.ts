@@ -768,6 +768,8 @@ export class AudioFileStream implements WatchStream {
       return undefined;
     }
 
+    // TODO: At tight Sounding cadences (e.g., <5s), spawning ffmpeg per Sounding may introduce
+    // seek + encode overhead. Consider pre-transcoding or using a persistent process.
     const base64 = await extractAudioSlice(
       this.file,
       startOffset,
@@ -899,6 +901,7 @@ export class VideoFileStream implements WatchStream {
 
     const frames: Array<{ dataBase64: string; mediaType: string; timestamp: number }> = [];
     for (const t of timestamps) {
+      // TODO: Spawning ffmpeg per frame/Sounding has spawn overhead. Consider persistent ffmpeg or pre-transcoding.
       const base64 = await extractVideoFrame(this.file, t, this.width, this.height);
       if (base64) {
         frames.push({
@@ -985,6 +988,13 @@ export function downsampleImage(
       resolve(null);
     });
 
+    // Handle stdin errors (e.g. EPIPE) if ffmpeg exits immediately
+    proc.stdin.on('error', () => {});
+
+    // Write the source base64 image to ffmpeg stdin.
+    // Note: Node's spawn starts the process asynchronously; writing here is safe
+    // because streams buffer writes until the fd is open, but we handle potential
+    // write failures gracefully via the close/error event handlers and the stdin error catcher.
     proc.stdin.write(Buffer.from(base64Data, 'base64'));
     proc.stdin.end();
   });
@@ -1019,6 +1029,9 @@ export function downsampleVideo(
 }
 
 function recordScreenVideo(outputPath: string, durationSeconds: number): Promise<boolean> {
+  if (process.platform !== 'darwin') {
+    return Promise.resolve(false);
+  }
   return new Promise((resolve) => {
     const proc = spawn('screencapture', [
       '-x',
@@ -1046,6 +1059,16 @@ export class DesktopCaptureBridge {
 
   start(): void {
     if (this.running) {
+      return;
+    }
+    if (process.platform !== 'darwin') {
+      this.log.append({
+        type: 'desktop_capture_error',
+        at: new Date().toISOString(),
+        error: {
+          message: `Desktop capture requires macOS (darwin platform). Current platform is: ${process.platform}`,
+        },
+      });
       return;
     }
     this.running = true;

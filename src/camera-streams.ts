@@ -12,6 +12,7 @@ const RECONNECT_DELAY_MS = 3_000;
 export class CameraStreamBridge {
   private running = false;
   private socket: WebSocket | undefined;
+  private processingChain = Promise.resolve();
 
   constructor(
     private readonly config: CameraStreamConfig,
@@ -24,6 +25,7 @@ export class CameraStreamBridge {
       return;
     }
     this.running = true;
+    this.processingChain = Promise.resolve();
     void this.connectLoop();
   }
 
@@ -84,7 +86,7 @@ export class CameraStreamBridge {
         }
 
         if (payload.type === 'chunk') {
-          void (async () => {
+          this.processingChain = this.processingChain.then(async () => {
             let finalPayload = payload;
             if (
               this.config.width &&
@@ -115,7 +117,14 @@ export class CameraStreamBridge {
                 sizeBytes: numberOrUndefined(finalPayload.sizeBytes),
               });
             }
-          })();
+          }).catch(err => {
+            this.log.append({
+              type: 'camera_stream_error',
+              at: new Date().toISOString(),
+              stream: this.config.name,
+              error: errorToJson(err),
+            });
+          });
         } else if (payload.type === 'error') {
           this.log.append({
             type: 'camera_stream_error',
