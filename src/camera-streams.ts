@@ -1,6 +1,7 @@
 import type { CameraStreamConfig, JsonObject } from './types.js';
 import { EventLog } from './event-log.js';
 import { StreamRegistry } from './streams.js';
+import { downsampleImage } from './stream-primitives.js';
 
 const DEFAULT_CAMERA_STREAM_FPS = 1;
 const DEFAULT_CAMERA_STREAM_MODE = 'stills';
@@ -83,17 +84,38 @@ export class CameraStreamBridge {
         }
 
         if (payload.type === 'chunk') {
-          const accepted = this.streams.push(this.config.name, payload);
-          if (accepted) {
-            this.log.append({
-              type: 'camera_stream_buffered',
-              at: new Date().toISOString(),
-              stream: this.config.name,
-              sequence: numberOrUndefined(payload.sequence),
-              mediaType: typeof payload.mediaType === 'string' ? payload.mediaType : undefined,
-              sizeBytes: numberOrUndefined(payload.sizeBytes),
-            });
-          }
+          void (async () => {
+            let finalPayload = payload;
+            if (
+              this.config.width &&
+              this.config.height &&
+              typeof payload.dataBase64 === 'string' &&
+              typeof payload.mediaType === 'string' &&
+              payload.mediaType.startsWith('image/')
+            ) {
+              const downsampled = await downsampleImage(payload.dataBase64, this.config.width, this.config.height);
+              if (downsampled) {
+                finalPayload = {
+                  ...payload,
+                  dataBase64: downsampled,
+                  mediaType: 'image/jpeg',
+                  sizeBytes: Buffer.from(downsampled, 'base64').byteLength,
+                };
+              }
+            }
+
+            const accepted = this.streams.push(this.config.name, finalPayload);
+            if (accepted) {
+              this.log.append({
+                type: 'camera_stream_buffered',
+                at: new Date().toISOString(),
+                stream: this.config.name,
+                sequence: numberOrUndefined(finalPayload.sequence),
+                mediaType: typeof finalPayload.mediaType === 'string' ? finalPayload.mediaType : undefined,
+                sizeBytes: numberOrUndefined(finalPayload.sizeBytes),
+              });
+            }
+          })();
         } else if (payload.type === 'error') {
           this.log.append({
             type: 'camera_stream_error',

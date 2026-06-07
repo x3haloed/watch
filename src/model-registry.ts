@@ -280,6 +280,7 @@ export class ModelRegistry {
 }
 
 const WATCH_OPENROUTER_VIDEO_SENTINEL = '__watch_openrouter_video__:';
+const WATCH_OPENROUTER_AUDIO_SENTINEL = '__watch_openrouter_audio__:';
 
 function transformOpenRouterRequestBody(args: Record<string, any>): Record<string, any> {
   return {
@@ -299,12 +300,29 @@ function transformOpenRouterMessage(message: unknown): unknown {
     if (!part || typeof part !== 'object') return [part];
     const partRecord = part as Record<string, any>;
     if (partRecord.type !== 'text' || typeof partRecord.text !== 'string') return [part];
+    
     const video = parseOpenRouterVideoSentinel(partRecord.text);
-    if (!video) return [part];
-    return [
-      ...(video.text ? [{ type: 'text', text: video.text }] : []),
-      { type: 'video_url', video_url: { url: video.url } },
-    ];
+    if (video) {
+      return [
+        ...(video.text ? [{ type: 'text', text: video.text }] : []),
+        { type: 'video_url', video_url: { url: video.url } },
+      ];
+    }
+
+    const audio = parseOpenRouterAudioSentinel(partRecord.text);
+    if (audio) {
+      return [
+        {
+          type: 'input_audio',
+          input_audio: {
+            data: audio.data,
+            format: audio.format,
+          },
+        },
+      ];
+    }
+
+    return [part];
   });
 
   return { ...record, content };
@@ -316,6 +334,18 @@ function parseOpenRouterVideoSentinel(text: string): { url: string; text?: strin
     const parsed = JSON.parse(text.slice(WATCH_OPENROUTER_VIDEO_SENTINEL.length)) as { url?: unknown; text?: unknown };
     return typeof parsed.url === 'string'
       ? { url: parsed.url, text: typeof parsed.text === 'string' ? parsed.text : undefined }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseOpenRouterAudioSentinel(text: string): { data: string; format: string } | undefined {
+  if (!text.startsWith(WATCH_OPENROUTER_AUDIO_SENTINEL)) return undefined;
+  try {
+    const parsed = JSON.parse(text.slice(WATCH_OPENROUTER_AUDIO_SENTINEL.length)) as { data?: unknown; format?: unknown };
+    return typeof parsed.data === 'string' && typeof parsed.format === 'string'
+      ? { data: parsed.data, format: parsed.format }
       : undefined;
   } catch {
     return undefined;

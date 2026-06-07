@@ -22,6 +22,7 @@ type WatchConfigFile = {
   restAfterNoToolSoundings?: number;
   estimatedTokenWarningThreshold?: number;
   discord?: WatchConfig['discord'];
+  desktopCapture?: WatchConfig['desktopCapture'];
 };
 
 async function main(): Promise<void> {
@@ -151,6 +152,17 @@ function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
     webApiStreams: Array.isArray(file.webApiStreams) ? file.webApiStreams : [],
     cameraStreams: Array.isArray(file.cameraStreams) ? file.cameraStreams : [],
     discord: file.discord,
+    desktopCapture: file.desktopCapture ? {
+      enabled: file.desktopCapture.enabled !== false,
+      name: file.desktopCapture.name || 'desktop:capture',
+      fps: file.desktopCapture.fps ?? 5,
+      width: file.desktopCapture.width ?? 1024,
+      height: file.desktopCapture.height ?? 768,
+      duration: file.desktopCapture.duration ?? 5,
+      waking: file.desktopCapture.waking ?? false,
+      subscribed: file.desktopCapture.subscribed ?? true,
+      maxBufferedChunks: file.desktopCapture.maxBufferedChunks ?? 3,
+    } : undefined,
     scratchpad: file.scratchpad ?? {},
     restingModel: stringFlag(args, '--resting-model') ?? file.restingModel ?? file.defaultModel ?? defaultModel,
     restAfterNoToolSoundings: numberFlag(args, '--rest-after-no-tool-soundings') ?? file.restAfterNoToolSoundings ?? 3,

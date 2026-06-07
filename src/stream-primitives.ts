@@ -1,6 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { basename } from 'node:path';
-import type { JsonObject, ModelCapabilities, StreamDelta, TextStreamSnapshot } from './types.js';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import type { AudioStreamSnapshot, DesktopCaptureConfig, JsonObject, ModelCapabilities, StreamDelta, TextStreamSnapshot, VideoStreamSnapshot } from './types.js';
 
 export type StoredMessage = {
   id: number;
@@ -553,13 +555,558 @@ function commonSuffixLength(a: string[], b: string[]): number {
 }
 
 function deliveryModeFor(stream: string, capabilities: ModelCapabilities): string {
-  if (stream === 'video') {
+  if (stream === 'video' || stream.startsWith('video:') || stream.startsWith('camera:')) {
     if (capabilities.video) return 'video';
     if (capabilities.images) return 'sampled-frames';
     return 'metadata-only';
   }
-  if (stream === 'audio') {
+  if (stream === 'audio' || stream.startsWith('audio:')) {
     return capabilities.audio ? 'audio' : 'metadata-only';
   }
   return 'raw-buffer';
 }
+
+const execFileAsync = promisify(execFile);
+
+export async function getMediaDuration(filePath: string): Promise<number> {
+  try {
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      filePath,
+    ]);
+    const duration = parseFloat(stdout.trim());
+    return Number.isFinite(duration) ? duration : Infinity;
+  } catch {
+    return Infinity;
+  }
+}
+
+export function extractAudioSlice(
+  filePath: string,
+  startSecond: number,
+  durationSeconds: number,
+  sampleRate?: number,
+  channels?: number,
+  format?: string,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const targetFormat = format || 'wav';
+    const args = [
+      '-ss', startSecond.toFixed(3),
+      '-t', durationSeconds.toFixed(3),
+      '-i', filePath,
+      ...(sampleRate ? ['-ar', sampleRate.toString()] : []),
+      ...(channels ? ['-ac', channels.toString()] : []),
+      '-f', targetFormat,
+      'pipe:1',
+    ];
+    const proc = spawn('ffmpeg', args);
+
+    const chunks: Buffer[] = [];
+    proc.stdout.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0 && chunks.length > 0) {
+        resolve(Buffer.concat(chunks).toString('base64'));
+      } else {
+        resolve(null);
+      }
+    });
+
+    proc.on('error', () => {
+      resolve(null);
+    });
+  });
+}
+
+export function extractVideoFrame(
+  filePath: string,
+  timeSeconds: number,
+  width?: number,
+  height?: number,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const scaleFilter = (width && height) ? `scale=${width}:${height}:force_original_aspect_ratio=decrease` : undefined;
+    const args = [
+      '-ss', timeSeconds.toFixed(3),
+      '-i', filePath,
+      ...(scaleFilter ? ['-vf', scaleFilter] : []),
+      '-vframes', '1',
+      '-f', 'image2pipe',
+      '-vcodec', 'mjpeg',
+      '-',
+    ];
+    const proc = spawn('ffmpeg', args);
+
+    const chunks: Buffer[] = [];
+    proc.stdout.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0 && chunks.length > 0) {
+        const buffer = Buffer.concat(chunks);
+        resolve(buffer.toString('base64'));
+      } else {
+        resolve(null);
+      }
+    });
+
+    proc.on('error', () => {
+      resolve(null);
+    });
+  });
+}
+
+export function isVideoStreamSnapshot(value: unknown): value is VideoStreamSnapshot {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const item = value as Partial<VideoStreamSnapshot>;
+  return typeof item.name === 'string'
+    && typeof item.file === 'string'
+    && typeof item.fps === 'number'
+    && typeof item.speed === 'number'
+    && typeof item.videoTime === 'number'
+    && typeof item.duration === 'number';
+}
+
+export function isAudioStreamSnapshot(value: unknown): value is AudioStreamSnapshot {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const item = value as Partial<AudioStreamSnapshot>;
+  return typeof item.name === 'string'
+    && typeof item.file === 'string'
+    && typeof item.speed === 'number'
+    && typeof item.sampleRate === 'number'
+    && typeof item.channels === 'number'
+    && typeof item.format === 'string'
+    && typeof item.audioTime === 'number'
+    && typeof item.duration === 'number';
+}
+
+export class AudioFileStream implements WatchStream {
+  readonly waking = false;
+  private audioTime: number;
+  private lastPopTime: Date | undefined;
+
+  constructor(
+    readonly name: string,
+    private readonly file: string,
+    private readonly displayPath: string,
+    private readonly speed: number,
+    private readonly sampleRate: number,
+    private readonly channels: number,
+    private readonly format: string,
+    startSecond: number,
+    private readonly duration: number,
+  ) {
+    this.audioTime = startSecond;
+  }
+
+  push(): void {
+    // Audio file streams advance only when sampled into a Sounding.
+  }
+
+  hasDelta(): boolean {
+    return this.audioTime < this.duration;
+  }
+
+  async readInitialChunk(): Promise<JsonObject | undefined> {
+    const duration = Math.min(1, this.duration - this.audioTime);
+    if (duration <= 0) {
+      return undefined;
+    }
+    const base64 = await extractAudioSlice(
+      this.file,
+      this.audioTime,
+      duration,
+      this.sampleRate,
+      this.channels,
+      this.format,
+    );
+    if (!base64) {
+      return undefined;
+    }
+    let mimeType = `audio/${this.format}`;
+    if (this.format === 'mp3') {
+      mimeType = 'audio/mp3';
+    } else if (this.format === 'm4a') {
+      mimeType = 'audio/m4a';
+    }
+    return {
+      kind: 'audio_file_chunk',
+      stream: this.name,
+      startOffset: this.audioTime,
+      endOffset: this.audioTime + duration,
+      dataBase64: base64,
+      mediaType: mimeType,
+    };
+  }
+
+  async popDelta(context: StreamPopContext): Promise<StreamDelta | undefined> {
+    const now = context.now;
+    let elapsedSeconds = 0;
+    if (this.lastPopTime) {
+      elapsedSeconds = (now.getTime() - this.lastPopTime.getTime()) / 1000;
+    }
+    this.lastPopTime = now;
+
+    const startOffset = this.audioTime;
+    const deltaSeconds = elapsedSeconds * this.speed;
+    const endOffset = Math.min(this.duration, startOffset + deltaSeconds);
+
+    this.audioTime = endOffset;
+
+    const durationSeconds = endOffset - startOffset;
+    if (durationSeconds <= 0) {
+      return undefined;
+    }
+
+    const base64 = await extractAudioSlice(
+      this.file,
+      startOffset,
+      durationSeconds,
+      this.sampleRate,
+      this.channels,
+      this.format,
+    );
+
+    if (!base64) {
+      return undefined;
+    }
+
+    const done = this.audioTime >= this.duration;
+    let mimeType = `audio/${this.format}`;
+    if (this.format === 'mp3') {
+      mimeType = 'audio/mp3';
+    } else if (this.format === 'm4a') {
+      mimeType = 'audio/m4a';
+    }
+
+    return {
+      stream: this.name,
+      at: now.toISOString(),
+      payload: {
+        kind: 'audio_file_chunk',
+        stream: this.name,
+        file: this.displayPath,
+        filename: basename(this.file),
+        startOffset,
+        endOffset,
+        audioTime: this.audioTime,
+        duration: this.duration,
+        dataBase64: base64,
+        mediaType: mimeType,
+        done,
+        hint: done
+          ? 'Audio stream reached end and will be removed from gaze.'
+          : `Next Sounding will include audio chunk. Call audio_stream_close or unsubscribe_stream to stop.`,
+      },
+    };
+  }
+
+  isDone(): boolean {
+    return !this.hasDelta();
+  }
+
+  snapshot(): AudioStreamSnapshot {
+    return {
+      name: this.name,
+      file: this.file,
+      speed: this.speed,
+      sampleRate: this.sampleRate,
+      channels: this.channels,
+      format: this.format,
+      audioTime: this.audioTime,
+      duration: this.duration,
+    };
+  }
+}
+
+export class VideoFileStream implements WatchStream {
+  readonly waking = false;
+  private videoTime: number;
+  private lastPopTime: Date | undefined;
+
+  constructor(
+    readonly name: string,
+    private readonly file: string,
+    private readonly displayPath: string,
+    private readonly fps: number,
+    private readonly speed: number,
+    startSecond: number,
+    private readonly duration: number,
+    private readonly width?: number,
+    private readonly height?: number,
+  ) {
+    this.videoTime = startSecond;
+  }
+
+  push(): void {
+    // Video file streams advance only when sampled into a Sounding.
+  }
+
+  hasDelta(): boolean {
+    return this.videoTime < this.duration;
+  }
+
+  async readInitialChunk(): Promise<JsonObject | undefined> {
+    const base64 = await extractVideoFrame(this.file, this.videoTime, this.width, this.height);
+    if (!base64) {
+      return undefined;
+    }
+    return {
+      kind: 'video_frame',
+      stream: this.name,
+      timestamp: this.videoTime,
+      dataBase64: base64,
+      mediaType: 'image/jpeg',
+    };
+  }
+
+  async popDelta(context: StreamPopContext): Promise<StreamDelta | undefined> {
+    const now = context.now;
+    let elapsedSeconds = 0;
+    if (this.lastPopTime) {
+      elapsedSeconds = (now.getTime() - this.lastPopTime.getTime()) / 1000;
+    }
+    this.lastPopTime = now;
+
+    const startOffset = this.videoTime;
+    const deltaSeconds = elapsedSeconds * this.speed;
+    const endOffset = Math.min(this.duration, startOffset + deltaSeconds);
+
+    this.videoTime = endOffset;
+
+    const timestamps: number[] = [];
+    if (deltaSeconds === 0) {
+      timestamps.push(startOffset);
+    } else {
+      const step = 1 / this.fps;
+      for (let t = startOffset + step; t <= endOffset; t += step) {
+        timestamps.push(t);
+      }
+      if (timestamps.length === 0 && deltaSeconds > 0) {
+        timestamps.push(endOffset);
+      }
+    }
+
+    const frames: Array<{ dataBase64: string; mediaType: string; timestamp: number }> = [];
+    for (const t of timestamps) {
+      const base64 = await extractVideoFrame(this.file, t, this.width, this.height);
+      if (base64) {
+        frames.push({
+          dataBase64: base64,
+          mediaType: 'image/jpeg',
+          timestamp: t,
+        });
+      }
+    }
+
+    if (frames.length === 0) {
+      return undefined;
+    }
+
+    const done = this.videoTime >= this.duration;
+    return {
+      stream: this.name,
+      at: now.toISOString(),
+      payload: {
+        kind: 'video_file_chunk',
+        stream: this.name,
+        file: this.displayPath,
+        filename: basename(this.file),
+        startOffset,
+        endOffset,
+        videoTime: this.videoTime,
+        duration: this.duration,
+        count: frames.length,
+        done,
+        items: frames,
+        hint: done
+          ? 'Video stream reached end and will be removed from gaze.'
+          : `Next Sounding will include video frames. Call video_stream_close or unsubscribe_stream to stop.`,
+      },
+    };
+  }
+
+  isDone(): boolean {
+    return !this.hasDelta();
+  }
+
+  snapshot(): VideoStreamSnapshot {
+    return {
+      name: this.name,
+      file: this.file,
+      fps: this.fps,
+      speed: this.speed,
+      videoTime: this.videoTime,
+      duration: this.duration,
+      width: this.width,
+      height: this.height,
+    };
+  }
+}
+
+export function downsampleImage(
+  base64Data: string,
+  width: number,
+  height: number,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const proc = spawn('ffmpeg', [
+      '-i', 'pipe:0',
+      '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease`,
+      '-f', 'image2pipe',
+      '-vcodec', 'mjpeg',
+      '-',
+    ]);
+
+    const chunks: Buffer[] = [];
+    proc.stdout.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0 && chunks.length > 0) {
+        resolve(Buffer.concat(chunks).toString('base64'));
+      } else {
+        resolve(null);
+      }
+    });
+
+    proc.on('error', () => {
+      resolve(null);
+    });
+
+    proc.stdin.write(Buffer.from(base64Data, 'base64'));
+    proc.stdin.end();
+  });
+}
+
+export function downsampleVideo(
+  inputPath: string,
+  outputPath: string,
+  width: number,
+  height: number,
+  fps: number,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const proc = spawn('ffmpeg', [
+      '-i', inputPath,
+      '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,fps=${fps}`,
+      '-vcodec', 'libx264',
+      '-crf', '30',
+      '-preset', 'ultrafast',
+      '-y',
+      outputPath,
+    ]);
+
+    proc.on('close', (code) => {
+      resolve(code === 0);
+    });
+
+    proc.on('error', () => {
+      resolve(false);
+    });
+  });
+}
+
+function recordScreenVideo(outputPath: string, durationSeconds: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const proc = spawn('screencapture', [
+      '-x',
+      '-v',
+      '-V', durationSeconds.toString(),
+      outputPath,
+    ]);
+    proc.on('close', (code) => {
+      resolve(code === 0);
+    });
+    proc.on('error', () => {
+      resolve(false);
+    });
+  });
+}
+
+export class DesktopCaptureBridge {
+  private running = false;
+
+  constructor(
+    private readonly config: DesktopCaptureConfig,
+    private readonly streams: { push(stream: string, payload: JsonObject): boolean },
+    private readonly log: { append(event: JsonObject): void },
+  ) {}
+
+  start(): void {
+    if (this.running) {
+      return;
+    }
+    this.running = true;
+    void this.loop();
+  }
+
+  stop(): void {
+    this.running = false;
+  }
+
+  private async loop(): Promise<void> {
+    const streamName = this.config.name ?? 'desktop:capture';
+    const duration = this.config.duration ?? 5;
+    const width = this.config.width ?? 1024;
+    const height = this.config.height ?? 768;
+    const fps = this.config.fps ?? 5;
+
+    while (this.running) {
+      const nowMs = Date.now();
+      const rawFile = `/tmp/watch-desktop-raw-${nowMs}.mp4`;
+      const downsampledFile = `/tmp/watch-desktop-downsampled-${nowMs}.mp4`;
+
+      try {
+        const captured = await recordScreenVideo(rawFile, duration);
+        if (captured && this.running) {
+          const downsampled = await downsampleVideo(rawFile, downsampledFile, width, height, fps);
+          if (downsampled && this.running) {
+            const fs = await import('node:fs/promises');
+            const buffer = await fs.readFile(downsampledFile);
+            const base64 = buffer.toString('base64');
+
+            this.streams.push(streamName, {
+              type: 'chunk',
+              mediaType: 'video/mp4',
+              dataBase64: base64,
+              timestamp: new Date().toISOString(),
+              filename: 'desktop.mp4',
+            });
+          }
+        }
+      } catch (error) {
+        if (this.running) {
+          this.log.append({
+            type: 'desktop_capture_error',
+            at: new Date().toISOString(),
+            error: {
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+      } finally {
+        try { unlinkSync(rawFile); } catch {}
+        try { unlinkSync(downsampledFile); } catch {}
+      }
+
+      if (this.running) {
+        // Sleep 1 second before the next slice
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+  }
+}
+
+

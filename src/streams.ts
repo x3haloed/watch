@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
-import type { JsonObject, StreamDelta, StreamRegistrySnapshot, TextStreamSnapshot, WebApiStreamConfig } from './types.js';
+import type { AudioStreamSnapshot, JsonObject, StreamDelta, StreamRegistrySnapshot, TextStreamSnapshot, VideoStreamSnapshot, WebApiStreamConfig } from './types.js';
 import {
   BufferedStream,
   ClockStream,
@@ -9,11 +9,16 @@ import {
   InboxStream,
   MessageStore,
   TextFileStream,
+  VideoFileStream,
+  AudioFileStream,
   UserNotesStream,
   clampChar,
   cleanStringArray,
   hasParentTraversal,
   isTextStreamSnapshot,
+  isVideoStreamSnapshot,
+  isAudioStreamSnapshot,
+  getMediaDuration,
   readFileSyncUtf8,
   validCharsPerSounding,
   validMaxPayloads,
@@ -159,6 +164,150 @@ export class StreamRegistry {
     };
   }
 
+  async openVideoFileStream(input: {
+    path: string;
+    fps?: number;
+    speed?: number;
+    resumeAtSecond?: number;
+    width?: number;
+    height?: number;
+  }): Promise<Record<string, unknown>> {
+    const file = this.resolvePath(input.path);
+    const fps = input.fps ?? 1;
+    const speed = input.speed ?? 1;
+    const startSecond = input.resumeAtSecond ?? 0;
+    const duration = await getMediaDuration(file);
+
+    const stream = new VideoFileStream(
+      `video:${basename(file)}:${randomUUID().slice(0, 8)}`,
+      file,
+      this.displayPath(file),
+      fps,
+      speed,
+      startSecond,
+      duration,
+      input.width,
+      input.height,
+    );
+
+    const firstChunk = await stream.readInitialChunk();
+    this.streams.set(stream.name, stream);
+    if (!stream.isDone()) {
+      this.subscriptions.add(stream.name);
+    }
+    this.emitGazeChanged();
+    return {
+      ok: true,
+      stream: stream.name,
+      file: this.displayPath(file),
+      filename: basename(file),
+      fps,
+      speed,
+      width: input.width,
+      height: input.height,
+      videoTime: startSecond,
+      duration,
+      subscribed: !stream.isDone(),
+      message: `video stream for file ${basename(file)} opened successfully. total duration: ${duration}s. Fps: ${fps}, speed: ${speed}x. Initial frame extracted:`,
+      firstChunk,
+      next_actions: stream.isDone()
+        ? ['Video stream reached duration end in the first chunk. Call video_stream_open with resumeAtSecond to read from another position.']
+        : [`Future Soundings will include the next video frames. Call video_stream_close or unsubscribe_stream to stop.`],
+    };
+  }
+
+  closeVideoFileStream(stream: string): Record<string, unknown> {
+    const existing = this.streams.get(stream);
+    const existed = existing instanceof VideoFileStream;
+    const unsubscribed = this.unsubscribe(stream);
+    if (existed) {
+      this.streams.delete(stream);
+    }
+    if (existed || unsubscribed) {
+      this.emitGazeChanged();
+    }
+    return {
+      ok: true,
+      stream,
+      closed: existed,
+      unsubscribed,
+      subscriptions: this.listSubscriptions(),
+    };
+  }
+
+  async openAudioFileStream(input: {
+    path: string;
+    speed?: number;
+    sampleRate?: number;
+    channels?: number;
+    format?: string;
+    resumeAtSecond?: number;
+  }): Promise<Record<string, unknown>> {
+    const file = this.resolvePath(input.path);
+    const speed = input.speed ?? 1;
+    const sampleRate = input.sampleRate ?? 16000;
+    const channels = input.channels ?? 1;
+    const format = input.format ?? 'wav';
+    const startSecond = input.resumeAtSecond ?? 0;
+    const duration = await getMediaDuration(file);
+
+    const stream = new AudioFileStream(
+      `audio:${basename(file)}:${randomUUID().slice(0, 8)}`,
+      file,
+      this.displayPath(file),
+      speed,
+      sampleRate,
+      channels,
+      format,
+      startSecond,
+      duration,
+    );
+
+    const firstChunk = await stream.readInitialChunk();
+    this.streams.set(stream.name, stream);
+    if (!stream.isDone()) {
+      this.subscriptions.add(stream.name);
+    }
+    this.emitGazeChanged();
+    return {
+      ok: true,
+      stream: stream.name,
+      file: this.displayPath(file),
+      filename: basename(file),
+      speed,
+      sampleRate,
+      channels,
+      format,
+      audioTime: startSecond,
+      duration,
+      subscribed: !stream.isDone(),
+      message: `audio stream for file ${basename(file)} opened successfully. total duration: ${duration}s. speed: ${speed}x, sampleRate: ${sampleRate}Hz, channels: ${channels}, format: ${format}. Initial audio chunk extracted:`,
+      firstChunk,
+      next_actions: stream.isDone()
+        ? ['Audio stream reached duration end in the first chunk. Call audio_stream_open with resumeAtSecond to read from another position.']
+        : [`Future Soundings will include the next audio chunks. Call audio_stream_close or unsubscribe_stream to stop.`],
+    };
+  }
+
+  closeAudioFileStream(stream: string): Record<string, unknown> {
+    const existing = this.streams.get(stream);
+    const existed = existing instanceof AudioFileStream;
+    const unsubscribed = this.unsubscribe(stream);
+    if (existed) {
+      this.streams.delete(stream);
+    }
+    if (existed || unsubscribed) {
+      this.emitGazeChanged();
+    }
+    return {
+      ok: true,
+      stream,
+      closed: existed,
+      unsubscribed,
+      subscriptions: this.listSubscriptions(),
+    };
+  }
+
   isSubscribed(stream: string): boolean {
     return this.subscriptions.has(stream);
   }
@@ -199,11 +348,11 @@ export class StreamRegistry {
       if (delta) {
         deltas.push(delta);
       }
-      if (stream instanceof TextFileStream && stream.isDone()) {
+      if ((stream instanceof TextFileStream || stream instanceof VideoFileStream || stream instanceof AudioFileStream) && stream.isDone()) {
         this.subscriptions.delete(stream.name);
         this.streams.delete(stream.name);
         this.emitGazeChanged();
-      } else if (stream instanceof TextFileStream) {
+      } else if (stream instanceof TextFileStream || stream instanceof VideoFileStream || stream instanceof AudioFileStream) {
         this.emitGazeChanged();
       }
     }
@@ -246,6 +395,12 @@ export class StreamRegistry {
       textStreams: [...this.streams.values()]
         .filter((stream): stream is TextFileStream => stream instanceof TextFileStream)
         .map(stream => stream.snapshot()),
+      videoStreams: [...this.streams.values()]
+        .filter((stream): stream is VideoFileStream => stream instanceof VideoFileStream)
+        .map(stream => stream.snapshot()),
+      audioStreams: [...this.streams.values()]
+        .filter((stream): stream is AudioFileStream => stream instanceof AudioFileStream)
+        .map(stream => stream.snapshot()),
     };
   }
 
@@ -282,6 +437,26 @@ export class StreamRegistry {
       } catch {
         this.subscriptions.delete(text.name);
       }
+    }
+
+    for (const video of Array.isArray(state.videoStreams) ? state.videoStreams : []) {
+      if (!isVideoStreamSnapshot(video)) {
+        continue;
+      }
+      this.streams.set(
+        video.name,
+        new VideoFileStream(video.name, video.file, this.displayPath(video.file), video.fps, video.speed, video.videoTime, video.duration, video.width, video.height),
+      );
+    }
+
+    for (const audio of Array.isArray(state.audioStreams) ? state.audioStreams : []) {
+      if (!isAudioStreamSnapshot(audio)) {
+        continue;
+      }
+      this.streams.set(
+        audio.name,
+        new AudioFileStream(audio.name, audio.file, this.displayPath(audio.file), audio.speed, audio.sampleRate, audio.channels, audio.format, audio.audioTime, audio.duration),
+      );
     }
   }
 

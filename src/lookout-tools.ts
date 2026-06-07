@@ -550,6 +550,102 @@ export function createLookoutTools(ctx: any, sounding: Sounding, model: Resolved
           return result;
         },
       }),
+      video_stream_open: tool({
+        description:
+          'Begin reading a video file as a gaze stream. Extracts image frames on-the-fly based on elapsed time between Soundings. Returns the initial frame immediately, then future Soundings include subsequent frames until video end or video_stream_close/unsubscribe_stream.',
+        inputSchema: jsonSchema<{ path: string; fps?: number; speed?: number; resumeAtSecond?: number; width?: number; height?: number }>({
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Video file path. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected.' },
+            fps: { type: 'number', description: 'Optional frame rate to extract. Defaults to 1 (1 frame per video second).' },
+            speed: { type: 'number', description: 'Optional playback speed multiplier. Defaults to 1 (real-time speed).' },
+            resumeAtSecond: { type: 'number', description: 'Optional starting second offset to read/resume from. Defaults to 0.' },
+            width: { type: 'number', description: 'Optional target width to downsample video resolution.' },
+            height: { type: 'number', description: 'Optional target height to downsample video resolution.' },
+          },
+          required: ['path'],
+          additionalProperties: false,
+        }),
+        execute: async ({ path, fps, speed, resumeAtSecond, width, height }) => {
+          const result = await ctx.streams.openVideoFileStream({ path, fps, speed, resumeAtSecond, width, height });
+          ctx.log.append({
+            type: 'subscription_changed',
+            at: new Date().toISOString(),
+            stream: String(result.stream ?? 'video-stream'),
+            subscribed: Boolean(result.subscribed),
+          });
+          return result;
+        },
+      }),
+      video_stream_close: tool({
+        description: 'Stop and remove a video file gaze stream created by video_stream_open.',
+        inputSchema: jsonSchema<{ stream: string }>({
+          type: 'object',
+          properties: {
+            stream: { type: 'string', description: 'Stream name returned by video_stream_open.' },
+          },
+          required: ['stream'],
+          additionalProperties: false,
+        }),
+        execute: async ({ stream }) => {
+          const result = ctx.streams.closeVideoFileStream(stream);
+          ctx.log.append({
+            type: 'subscription_changed',
+            at: new Date().toISOString(),
+            stream,
+            subscribed: false,
+          });
+          return result;
+        },
+      }),
+      audio_stream_open: tool({
+        description:
+          'Begin reading an audio file as a gaze stream. Extracts audio chunks on-the-fly based on elapsed time between Soundings. Returns the initial chunk immediately, then future Soundings include subsequent chunks until audio end or audio_stream_close/unsubscribe_stream.',
+        inputSchema: jsonSchema<{ path: string; speed?: number; sampleRate?: number; channels?: number; format?: string; resumeAtSecond?: number }>({
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Audio file path. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected.' },
+            speed: { type: 'number', description: 'Optional playback speed multiplier. Defaults to 1 (real-time speed).' },
+            sampleRate: { type: 'number', description: 'Optional sample rate to downsample audio (e.g. 16000). Defaults to 16000 Hz.' },
+            channels: { type: 'number', description: 'Optional number of audio channels (e.g. 1 for mono, 2 for stereo). Defaults to 1.' },
+            format: { type: 'string', description: 'Optional target container format (e.g. "wav", "mp3"). Defaults to "wav".' },
+            resumeAtSecond: { type: 'number', description: 'Optional starting second offset to read/resume from. Defaults to 0.' },
+          },
+          required: ['path'],
+          additionalProperties: false,
+        }),
+        execute: async ({ path, speed, sampleRate, channels, format, resumeAtSecond }) => {
+          const result = await ctx.streams.openAudioFileStream({ path, speed, sampleRate, channels, format, resumeAtSecond });
+          ctx.log.append({
+            type: 'subscription_changed',
+            at: new Date().toISOString(),
+            stream: String(result.stream ?? 'audio-stream'),
+            subscribed: Boolean(result.subscribed),
+          });
+          return result;
+        },
+      }),
+      audio_stream_close: tool({
+        description: 'Stop and remove an audio file gaze stream created by audio_stream_open.',
+        inputSchema: jsonSchema<{ stream: string }>({
+          type: 'object',
+          properties: {
+            stream: { type: 'string', description: 'Stream name returned by audio_stream_open.' },
+          },
+          required: ['stream'],
+          additionalProperties: false,
+        }),
+        execute: async ({ stream }) => {
+          const result = ctx.streams.closeAudioFileStream(stream);
+          ctx.log.append({
+            type: 'subscription_changed',
+            at: new Date().toISOString(),
+            stream,
+            subscribed: false,
+          });
+          return result;
+        },
+      }),
       handle_with_model: tool({
         description:
           'Provisionally rerun the current Sounding on another model. Watch commits the new active model only if that model completes the Sounding successfully.',

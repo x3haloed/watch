@@ -257,9 +257,18 @@ export class Lookout {
   ): Promise<{ text: string; toolCallCount: number }> {
     const { text: promptText, mediaParts } = this.formatSounding(sounding, model, reroute, rerouteFailure, options.restModelNotice, options.restModelBlockedNotice);
     this.repairMessageHistory();
-    // Build content as array when camera media is present, string otherwise
+    // Build content as array when camera/video media is present, string otherwise
     const content = mediaParts.length > 0
-      ? [{ type: 'text' as const, text: promptText }, ...mediaParts.map(m => ({ type: 'image' as const, image: m.image, mediaType: m.mediaType }))]
+      ? [
+          { type: 'text' as const, text: promptText },
+          ...mediaParts.map(m => {
+            if (m.type === 'image') {
+              return { type: 'image' as const, image: m.image, mediaType: m.mediaType };
+            } else {
+              return { type: 'file' as const, data: m.data, mediaType: m.mediaType };
+            }
+          })
+        ]
       : promptText;
     this.messages.push({ role: 'user', content });
     let toolCallCount = 0;

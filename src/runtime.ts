@@ -8,6 +8,7 @@ import { DiscordBridge } from './discord.js';
 import { GazeStore } from './gaze-state.js';
 import { Scratchpad } from './scratchpad.js';
 import { CameraStreamBridge, registerCameraStreams } from './camera-streams.js';
+import { DesktopCaptureBridge } from './stream-primitives.js';
 
 const MODEL_FAILURE_BACKOFF_BASE_MS = 30_000;
 const MODEL_FAILURE_BACKOFF_MAX_MS = 5 * 60_000;
@@ -21,6 +22,7 @@ export class WatchRuntime {
   private readonly gazeStore: GazeStore;
   private readonly scratchpad: Scratchpad | undefined;
   private readonly cameraStreams: CameraStreamBridge[];
+  private readonly desktopCaptureBridge: DesktopCaptureBridge | undefined;
   private lastSoundingAt = Date.now();
   private running = false;
   private tickTimer: NodeJS.Timeout | undefined;
@@ -51,6 +53,16 @@ export class WatchRuntime {
     );
     this.log = new EventLog(config.repoRoot);
     this.cameraStreams = registerCameraStreams(config.cameraStreams, this.streams, this.log);
+    if (config.desktopCapture && config.desktopCapture.enabled !== false) {
+      this.streams.registerBufferedStream(config.desktopCapture.name || 'desktop:capture', {
+        subscribed: config.desktopCapture.subscribed ?? true,
+        waking: config.desktopCapture.waking ?? false,
+        maxPayloads: config.desktopCapture.maxBufferedChunks ?? 3,
+      });
+      this.desktopCaptureBridge = new DesktopCaptureBridge(config.desktopCapture, this.streams, this.log);
+    } else {
+      this.desktopCaptureBridge = undefined;
+    }
     this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
     this.discord = new DiscordBridge(
       config.discord,
@@ -87,6 +99,9 @@ export class WatchRuntime {
     for (const bridge of this.cameraStreams) {
       bridge.start();
     }
+    if (this.desktopCaptureBridge) {
+      this.desktopCaptureBridge.start();
+    }
     this.clockTimer = setInterval(() => this.sampleClock(), 250);
     this.tickTimer = setInterval(() => void this.maybeSound(), 100);
   }
@@ -100,6 +115,9 @@ export class WatchRuntime {
     this.lookout.stopTerminalSessions(reason);
     for (const bridge of this.cameraStreams) {
       bridge.stop(reason);
+    }
+    if (this.desktopCaptureBridge) {
+      this.desktopCaptureBridge.stop();
     }
     await this.discord.stop(reason);
     this.log.append({ type: 'daemon_stopped', at: new Date().toISOString(), pid: process.pid, reason });

@@ -9,6 +9,7 @@ export type WatchConfig = {
   availableModels: string[];
   webApiStreams: WebApiStreamConfig[];
   cameraStreams: CameraStreamConfig[];
+  desktopCapture?: DesktopCaptureConfig;
   ledgerPath?: string;
   discord?: DiscordConfig;
   scratchpad: ScratchpadConfig;
@@ -44,9 +45,23 @@ export type CameraStreamConfig = {
   url: string;
   mode?: 'stills' | 'video';
   fps?: number;
+  width?: number;
+  height?: number;
   duration?: number;
   motionGate?: boolean;
   format?: 'base64';
+  waking?: boolean;
+  subscribed?: boolean;
+  maxBufferedChunks?: number;
+};
+
+export type DesktopCaptureConfig = {
+  enabled?: boolean;
+  name?: string;
+  fps?: number;
+  width?: number;
+  height?: number;
+  duration?: number;
   waking?: boolean;
   subscribed?: boolean;
   maxBufferedChunks?: number;
@@ -73,10 +88,34 @@ export type TextStreamSnapshot = {
   nextChar: number;
 };
 
+export type VideoStreamSnapshot = {
+  name: string;
+  file: string;
+  fps: number;
+  speed: number;
+  videoTime: number;
+  duration: number;
+  width?: number;
+  height?: number;
+};
+
+export type AudioStreamSnapshot = {
+  name: string;
+  file: string;
+  speed: number;
+  sampleRate: number;
+  channels: number;
+  format: string;
+  audioTime: number;
+  duration: number;
+};
+
 export type StreamRegistrySnapshot = {
   subscriptions: string[];
   knownStreams?: string[];
   textStreams: TextStreamSnapshot[];
+  videoStreams?: VideoStreamSnapshot[];
+  audioStreams?: AudioStreamSnapshot[];
 };
 
 export type DiscordPolicySnapshot = {

@@ -6,6 +6,8 @@ import { mediaPlaceholder, modelSupportsMedia, modalityFromMediaType, type Media
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const WATCH_OPENROUTER_VIDEO_SENTINEL = '__watch_openrouter_video__:';
 
+const WATCH_OPENROUTER_AUDIO_SENTINEL = '__watch_openrouter_audio__:';
+
 export type ContextFit = {
   ok: boolean;
   usedTokensEstimate: number;
@@ -16,7 +18,9 @@ export type ContextFit = {
   recommendation?: string;
 };
 
-export type SoundingMediaPart = { type: 'image'; image: string; mediaType: string };
+export type SoundingMediaPart =
+  | { type: 'image'; image: string; mediaType: string }
+  | { type: 'file'; data: string; mediaType: string };
 
 export function formatLedgerEntry(entry: string): string {
   return `\n\n---\n\n[curl]\nat: ${new Date().toISOString()}\n[/curl]\n\n${entry}\n`;
@@ -64,7 +68,34 @@ export function sanitizeMessagesForHistory(messages: ModelMessage[]): ModelMessa
 export function messagesForModel(model: ResolvedModel, messages: ModelMessage[]): ModelMessage[] {
   const cloned = JSON.parse(JSON.stringify(messages)) as ModelMessage[];
   const supported = replaceUnsupportedMediaForModel(cloned, model) as ModelMessage[];
-  return usesOpenAICompatibleChatProvider(model) ? moveToolResultMediaToUserMessages(supported, model) : supported;
+  const withOpenRouterMedia = model.provider === 'openrouter' ? convertMediaFilePartsForOpenRouter(supported) : supported;
+  return usesOpenAICompatibleChatProvider(model) ? moveToolResultMediaToUserMessages(withOpenRouterMedia, model) : withOpenRouterMedia;
+}
+
+export function convertMediaFilePartsForOpenRouter(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map(message => {
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) {
+      return message;
+    }
+    const newContent = content.map(part => {
+      if (part && typeof part === 'object' && part.type === 'file') {
+        const mediaType = typeof part.mediaType === 'string' ? part.mediaType : '';
+        const videoType = openRouterVideoMediaType(mediaType);
+        if (videoType) {
+          const data = typeof part.data === 'string' ? part.data : '';
+          return openRouterVideoTextPart(data, videoType);
+        }
+        const audioFormat = openRouterAudioFormat(mediaType);
+        if (audioFormat) {
+          const data = typeof part.data === 'string' ? part.data : '';
+          return openRouterAudioTextPart(data, audioFormat);
+        }
+      }
+      return part;
+    });
+    return { ...message, content: newContent } as ModelMessage;
+  });
 }
 
 export function usesOpenAICompatibleChatProvider(model: ResolvedModel): boolean {
@@ -108,7 +139,12 @@ function prepareSoundingMediaRecord(
 ): Record<string, unknown> {
   const metadata = omitInlineMediaPayload(record);
   if (shouldAttachSoundingMedia(media.mediaType, model)) {
-    mediaParts.push({ type: 'image', image: media.dataBase64, mediaType: media.mediaType });
+    const modality = modalityFromMediaType(media.mediaType);
+    if (modality === 'image') {
+      mediaParts.push({ type: 'image', image: media.dataBase64, mediaType: media.mediaType });
+    } else if (modality === 'video' || modality === 'audio') {
+      mediaParts.push({ type: 'file', data: media.dataBase64, mediaType: media.mediaType });
+    }
     return metadata;
   }
 
@@ -133,13 +169,13 @@ function omitInlineMediaPayload(record: Record<string, unknown>): Record<string,
 
 function shouldAttachSoundingMedia(mediaType: string, model: ResolvedModel): boolean {
   const modality = modalityFromMediaType(mediaType);
-  return modality === 'image' && modelSupportsMedia(model, modality) && promptMediaSupportForModel(model, mediaType).ok;
+  return (modality === 'image' || modality === 'video' || modality === 'audio') && modelSupportsMedia(model, modality) && promptMediaSupportForModel(model, mediaType).ok;
 }
 
 function unsupportedSoundingMediaReason(mediaType: string, model: ResolvedModel): string {
   const modality = modalityFromMediaType(mediaType);
-  if (modality !== 'image') {
-    return `stream media type ${mediaType} is ${modality}; Sounding media attachment currently supports image frames only`;
+  if (modality !== 'image' && modality !== 'video' && modality !== 'audio') {
+    return `stream media type ${mediaType} is ${modality}; Sounding media attachment currently supports image frames, video, and audio only`;
   }
   if (!modelSupportsMedia(model, modality)) {
     return `active model ${model.id} does not support ${modality} input`;
@@ -153,13 +189,15 @@ export function promptMediaSupportForModel(model: ResolvedModel, mediaType: stri
   if (!usesOpenAICompatibleChatProvider(model)) {
     return { ok: true };
   }
-  if (model.provider === 'openrouter' && openRouterVideoMediaType(normalized)) {
-    return { ok: true };
+  if (model.provider === 'openrouter') {
+    if (openRouterVideoMediaType(normalized) || openRouterAudioFormat(normalized)) {
+      return { ok: true };
+    }
   }
   if (normalized.startsWith('image/')) {
     return { ok: true };
   }
-  if (normalized === 'audio/wav' || normalized === 'audio/mp3' || normalized === 'audio/mpeg') {
+  if (normalized.startsWith('audio/')) {
     return { ok: true };
   }
   if (normalized === 'application/pdf') {
@@ -170,7 +208,7 @@ export function promptMediaSupportForModel(model: ResolvedModel, mediaType: stri
   }
   return {
     ok: false,
-    reason: `The OpenAI-compatible provider cannot serialize ${mediaType} as model input. It currently supports images, WAV/MP3 audio, PDFs, and text files; OpenRouter also supports MP4/MPEG/MOV/WebM video.`,
+    reason: `The OpenAI-compatible provider cannot serialize ${mediaType} as model input. It currently supports images, audio formats, PDFs, and text files; OpenRouter also supports MP4/MPEG/MOV/WebM video.`,
   };
 }
 
@@ -261,6 +299,11 @@ function mediaUserContentPartsFromToolOutput(output: Record<string, unknown>, mo
         parts.push(openRouterVideoTextPart(item.data, openRouterVideoType));
         continue;
       }
+      const openRouterAudioFormatVal = model.provider === 'openrouter' ? openRouterAudioFormat(mediaType) : undefined;
+      if (openRouterAudioFormatVal) {
+        parts.push(openRouterAudioTextPart(item.data, openRouterAudioFormatVal));
+        continue;
+      }
       parts.push({
         type: 'file',
         data: item.data,
@@ -304,6 +347,27 @@ function openRouterVideoTextPart(dataOrUrl: string, mediaType: string): TextPart
   return {
     type: 'text',
     text: `${WATCH_OPENROUTER_VIDEO_SENTINEL}${JSON.stringify({ url })}`,
+  };
+}
+
+function openRouterAudioFormat(mediaType: string): string | undefined {
+  const normalized = mediaType.toLowerCase().split(';')[0]?.trim() ?? '';
+  if (normalized === 'audio/wav' || normalized === 'audio/x-wav') return 'wav';
+  if (normalized === 'audio/mp3' || normalized === 'audio/mpeg') return 'mp3';
+  if (normalized === 'audio/ogg') return 'ogg';
+  if (normalized === 'audio/flac' || normalized === 'audio/x-flac') return 'flac';
+  if (normalized === 'audio/aac' || normalized === 'audio/x-aac') return 'aac';
+  if (normalized === 'audio/m4a' || normalized === 'audio/x-m4a' || normalized === 'audio/mp4') return 'm4a';
+  if (normalized === 'audio/aiff' || normalized === 'audio/x-aiff') return 'aiff';
+  if (normalized === 'audio/pcm16') return 'pcm16';
+  if (normalized === 'audio/pcm24') return 'pcm24';
+  return undefined;
+}
+
+function openRouterAudioTextPart(base64Data: string, format: string): TextPart {
+  return {
+    type: 'text',
+    text: `${WATCH_OPENROUTER_AUDIO_SENTINEL}${JSON.stringify({ data: base64Data, format })}`,
   };
 }
 
