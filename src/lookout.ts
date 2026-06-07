@@ -26,6 +26,8 @@ import {
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const WATCH_OPENROUTER_VIDEO_SENTINEL = '__watch_openrouter_video__:';
 
+type SoundingMediaPart = { type: 'image'; image: string; mediaType: string };
+
 export type RestModelNotice = {
   fromModelId: string;
   toModelId: string;
@@ -1172,44 +1174,9 @@ ${lines.join('\n')}
     rerouteFailure?: { fromModelId: string; toModelId: string; error: Record<string, unknown> },
     restModelNotice?: RestModelNotice,
     restModelBlockedNotice?: RestModelBlockedNotice,
-  ): { text: string; mediaParts: Array<{ type: 'image'; image: string; mediaType: string }> } {
-    // Extract camera media from deltas before serializing to text
-    const mediaParts: Array<{ type: 'image'; image: string; mediaType: string }> = [];
-    const textDeltas: string[] = [];
-
-    for (const delta of sounding.deltas) {
-      const payload = delta.payload as Record<string, unknown>;
-      // Camera chunks have dataBase64 + mediaType at the top level
-      if (typeof payload.dataBase64 === 'string' && typeof payload.mediaType === 'string' && shouldAttachSoundingMedia(payload.mediaType, model)) {
-        mediaParts.push({ type: 'image', image: payload.dataBase64, mediaType: payload.mediaType });
-        const { dataBase64: _d, payload: _p, ...meta } = payload;
-        textDeltas.push(`${delta.stream}: ${JSON.stringify(meta)} @ ${delta.at}`);
-      } else if (typeof payload.dataBase64 === 'string' && typeof payload.mediaType === 'string') {
-        const { dataBase64: _d, payload: _p, ...meta } = payload;
-        textDeltas.push(`${delta.stream}: ${JSON.stringify({ ...meta, mediaOmitted: unsupportedSoundingMediaReason(payload.mediaType, model) })} @ ${delta.at}`);
-      } else if (Array.isArray(payload.items)) {
-        // BufferedStream format: { count, delivery, items: [...] }
-        const keptItems: unknown[] = [];
-        for (const item of payload.items) {
-          const it = item as Record<string, unknown>;
-          if (typeof it.dataBase64 === 'string' && typeof it.mediaType === 'string' && shouldAttachSoundingMedia(it.mediaType, model)) {
-            mediaParts.push({ type: 'image', image: it.dataBase64, mediaType: it.mediaType });
-            const { dataBase64: _d, ...meta } = it;
-            keptItems.push(meta);
-          } else if (typeof it.dataBase64 === 'string' && typeof it.mediaType === 'string') {
-            const { dataBase64: _d, ...meta } = it;
-            keptItems.push({ ...meta, mediaOmitted: unsupportedSoundingMediaReason(it.mediaType, model) });
-          } else {
-            keptItems.push(item);
-          }
-        }
-        textDeltas.push(`${delta.stream}: ${JSON.stringify({ ...payload, items: keptItems })} @ ${delta.at}`);
-      } else {
-        textDeltas.push(`${delta.stream}: ${JSON.stringify(delta.payload)} @ ${delta.at}`);
-      }
-    }
-
-    const deltas = textDeltas.join('\n');
+  ): { text: string; mediaParts: SoundingMediaPart[] } {
+    const preparedDeltas = prepareSoundingDeltas(sounding, model);
+    const deltas = preparedDeltas.textLines.join('\n');
     const rerouteFrame = reroute
       ? `
 [model_reroute]
@@ -1276,7 +1243,7 @@ ${this.streams.listSubscriptions().map(stream => `- ${stream}`).join('\n')}
 ${deltas || '(none)'}
 [/deltas]${restModelFrame}${restModelBlockedFrame}${rerouteFrame}${rerouteFailureFrame}`;
 
-    return { text, mediaParts };
+    return { text, mediaParts: preparedDeltas.mediaParts };
   }
 
   private contextDisclosureFrame(model: ResolvedModel, sounding: Sounding): string {
@@ -1432,6 +1399,66 @@ export function messagesForModel(model: ResolvedModel, messages: ModelMessage[])
 
 function usesOpenAICompatibleChatProvider(model: ResolvedModel): boolean {
   return model.provider === 'openai-compatible' || model.provider === 'openrouter';
+}
+
+function prepareSoundingDeltas(sounding: Sounding, model: ResolvedModel): { textLines: string[]; mediaParts: SoundingMediaPart[] } {
+  const mediaParts: SoundingMediaPart[] = [];
+  const textLines = sounding.deltas.map(delta => {
+    const payload = prepareSoundingPayload(delta.payload, model, mediaParts);
+    return `${delta.stream}: ${JSON.stringify(payload)} @ ${delta.at}`;
+  });
+  return { textLines, mediaParts };
+}
+
+function prepareSoundingPayload(payload: unknown, model: ResolvedModel, mediaParts: SoundingMediaPart[]): unknown {
+  if (!isRecord(payload)) {
+    return payload;
+  }
+
+  const media = mediaChunkFromRecord(payload);
+  if (media) {
+    return prepareSoundingMediaRecord(payload, media, model, mediaParts);
+  }
+
+  if (Array.isArray(payload.items)) {
+    return {
+      ...payload,
+      items: payload.items.map(item => prepareSoundingPayload(item, model, mediaParts)),
+    };
+  }
+
+  return payload;
+}
+
+function prepareSoundingMediaRecord(
+  record: Record<string, unknown>,
+  media: { dataBase64: string; mediaType: string },
+  model: ResolvedModel,
+  mediaParts: SoundingMediaPart[],
+): Record<string, unknown> {
+  const metadata = omitInlineMediaPayload(record);
+  if (shouldAttachSoundingMedia(media.mediaType, model)) {
+    mediaParts.push({ type: 'image', image: media.dataBase64, mediaType: media.mediaType });
+    return metadata;
+  }
+
+  return {
+    ...metadata,
+    mediaOmitted: unsupportedSoundingMediaReason(media.mediaType, model),
+  };
+}
+
+function mediaChunkFromRecord(record: Record<string, unknown>): { dataBase64: string; mediaType: string } | undefined {
+  const dataBase64 = record.dataBase64;
+  const mediaType = record.mediaType;
+  return typeof dataBase64 === 'string' && typeof mediaType === 'string'
+    ? { dataBase64, mediaType }
+    : undefined;
+}
+
+function omitInlineMediaPayload(record: Record<string, unknown>): Record<string, unknown> {
+  const { dataBase64: _dataBase64, payload: _payload, ...metadata } = record;
+  return metadata;
 }
 
 function shouldAttachSoundingMedia(mediaType: string, model: ResolvedModel): boolean {
