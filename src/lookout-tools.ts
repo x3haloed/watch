@@ -1,4 +1,5 @@
 import { jsonSchema, tool } from 'ai';
+import { resolve, isAbsolute } from 'node:path';
 import type { ResolvedModel, Sounding } from './types.js';
 import { parseDiscordAttentionScope } from './discord.js';
 import {
@@ -306,17 +307,36 @@ export function createLookoutTools(ctx: any, sounding: Sounding, model: Resolved
       send_message: tool({
         description:
           'Send a user-facing message to an external medium. Use this for communication; final assistant text is private working speech and is not routed to the user.',
-        inputSchema: jsonSchema<{ medium: string; message: string; replyToId?: number }>({
+        inputSchema: jsonSchema<{ medium: string; message: string; replyToId?: number; attachments?: string[] }>({
           type: 'object',
           properties: {
             medium: { type: 'string', description: 'Destination medium, for example "cli".' },
             message: { type: 'string', description: 'Message to send.' },
             replyToId: { type: 'number', description: 'Optional global message ID being replied to.' },
+            attachments: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Optional file paths or URLs to attach (Discord only).',
+            },
           },
           required: ['medium', 'message'],
           additionalProperties: false,
         }),
-        execute: async ({ medium, message, replyToId }) => {
+        execute: async ({ medium, message, replyToId, attachments }) => {
+          let resolvedAttachments: string[] | undefined;
+          if (attachments && attachments.length > 0) {
+            resolvedAttachments = attachments.map(filePath => {
+              const cleanPath = filePath.trim();
+              if (cleanPath.startsWith('http://') || cleanPath.startsWith('https://')) {
+                return cleanPath;
+              }
+              if (cleanPath.split(/[\\/]+/).includes('..')) {
+                throw new Error(`Parent traversal (..) is not allowed in attachment paths: ${cleanPath}`);
+              }
+              return isAbsolute(cleanPath) ? cleanPath : resolve(ctx.cwd, cleanPath);
+            });
+          }
+
           if (medium === 'cli') {
             ctx.log.append({
               type: 'cli_message',
@@ -325,12 +345,13 @@ export function createLookoutTools(ctx: any, sounding: Sounding, model: Resolved
               medium,
               replyToId,
               message,
+              attachments: resolvedAttachments,
             });
-            return { ok: true, delivered: medium, replyToId };
+            return { ok: true, delivered: medium, replyToId, attachments: resolvedAttachments };
           }
           if (medium === 'discord') {
             if (!ctx.discord) return { ok: false, error: 'Discord bridge is not configured.' };
-            const result = await ctx.discord.sendMessage({ replyToId, message });
+            const result = await ctx.discord.sendMessage({ replyToId, message, attachments: resolvedAttachments });
             if (result.ok === true) {
               const messageIds = Array.isArray(result.messages)
                 ? result.messages

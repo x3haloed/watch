@@ -7,6 +7,7 @@ import {
   type Message,
   type TextBasedChannel,
 } from 'discord.js';
+import { existsSync } from 'node:fs';
 import { EventLog } from './event-log.js';
 import { StreamRegistry } from './streams.js';
 import { mediaTypeFromFilename, modalityFromMediaType } from './media.js';
@@ -47,6 +48,7 @@ export type DiscordContextReadInput = {
 export type DiscordSendInput = {
   replyToId?: number;
   message: string;
+  attachments?: string[];
 };
 
 export class DiscordBridge {
@@ -270,6 +272,15 @@ export class DiscordBridge {
       return { ok: false, error: `Discord channel is not sendable: ${discord.channelId}` };
     }
 
+    if (input.attachments && input.attachments.length > 0) {
+      for (const filePath of input.attachments) {
+        const isUrl = filePath.startsWith('http://') || filePath.startsWith('https://');
+        if (!isUrl && !existsSync(filePath)) {
+          return { ok: false, error: `Attachment file not found: ${filePath}` };
+        }
+      }
+    }
+
     const chunks = chunkDiscordMessage(input.message);
     const sent = [];
     for (const [index, chunk] of chunks.entries()) {
@@ -277,6 +288,7 @@ export class DiscordBridge {
         content: chunk,
         allowedMentions: { repliedUser: index === 0, parse: [] },
         reply: index === 0 ? { messageReference: discord.messageId, failIfNotExists: false } : undefined,
+        files: (index === 0 && input.attachments && input.attachments.length > 0) ? input.attachments : undefined,
       };
       const result = await channel.send(payload).catch((error: unknown) => error);
       if (result instanceof Error) {
