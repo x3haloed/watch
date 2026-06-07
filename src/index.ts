@@ -158,7 +158,6 @@ function defaultConfig(repoRoot: string, args: string[]): WatchConfig {
       fps: file.desktopCapture.fps ?? 5,
       width: file.desktopCapture.width ?? 1024,
       height: file.desktopCapture.height ?? 768,
-      duration: file.desktopCapture.duration ?? 5,
       waking: file.desktopCapture.waking ?? false,
       subscribed: file.desktopCapture.subscribed ?? true,
       maxBufferedChunks: file.desktopCapture.maxBufferedChunks ?? 3,

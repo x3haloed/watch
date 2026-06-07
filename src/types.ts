@@ -61,7 +61,6 @@ export type DesktopCaptureConfig = {
   fps?: number;
   width?: number;
   height?: number;
-  duration?: number;
   waking?: boolean;
   subscribed?: boolean;
   maxBufferedChunks?: number;

@@ -271,11 +271,12 @@ export class WatchRuntime {
         this.soundQueued = false;
         const activeTrigger = nextTrigger;
         nextTrigger = undefined;
+        const now = Date.now();
+        const popAt = new Date(now);
+        await this.desktopCaptureBridge?.finishSegmentAndPush();
 
         const model = await this.models.getActive();
         const availability = this.config.noModel ? { ok: true as const } : await this.models.checkAvailable(model);
-        const now = Date.now();
-        const popAt = new Date(now);
         const deltas = await this.streams.popDeltas({ now: popAt, capabilities: model.capabilities });
         for (const delta of deltas) {
           this.log.append({ type: 'stream_delta', at: new Date().toISOString(), delta });
@@ -316,6 +317,7 @@ export class WatchRuntime {
             modelId: model.id,
             error: { name: 'ModelUnavailable', message: availability.reason },
           });
+          this.desktopCaptureBridge?.startSegment();
           this.beginModelFailureBackoff(model.id, availability.reason, sounding.id);
           break;
         }
@@ -371,6 +373,7 @@ export class WatchRuntime {
           this.beginModelFailureBackoff(this.lookout.modelId, errorMessage(error), sounding.id);
         } finally {
           this.activeAbortController = undefined;
+          this.desktopCaptureBridge?.startSegment();
         }
 
         if (this.running && Date.now() >= this.modelBackoffUntil && (this.soundQueued || this.streams.hasWakingPending())) {

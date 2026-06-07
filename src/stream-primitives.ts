@@ -1,6 +1,6 @@
 import { readFileSync, unlinkSync } from 'node:fs';
 import { basename } from 'node:path';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AudioStreamSnapshot, DesktopCaptureConfig, JsonObject, ModelCapabilities, StreamDelta, TextStreamSnapshot, VideoStreamSnapshot } from './types.js';
 
@@ -1028,28 +1028,17 @@ export function downsampleVideo(
   });
 }
 
-function recordScreenVideo(outputPath: string, durationSeconds: number): Promise<boolean> {
-  if (process.platform !== 'darwin') {
-    return Promise.resolve(false);
-  }
-  return new Promise((resolve) => {
-    const proc = spawn('screencapture', [
-      '-x',
-      '-v',
-      '-V', durationSeconds.toString(),
-      outputPath,
-    ]);
-    proc.on('close', (code) => {
-      resolve(code === 0);
-    });
-    proc.on('error', () => {
-      resolve(false);
-    });
-  });
-}
-
 export class DesktopCaptureBridge {
   private running = false;
+  private current:
+    | {
+        rawFile: string;
+        downsampledFile: string;
+        process: ChildProcessWithoutNullStreams;
+        closed: Promise<number | null>;
+        startedAt: Date;
+      }
+    | undefined;
 
   constructor(
     private readonly config: DesktopCaptureConfig,
@@ -1072,64 +1061,114 @@ export class DesktopCaptureBridge {
       return;
     }
     this.running = true;
-    void this.loop();
   }
 
   stop(): void {
     this.running = false;
+    void this.discardCurrentSegment();
   }
 
-  private async loop(): Promise<void> {
-    const streamName = this.config.name ?? 'desktop:capture';
-    const duration = this.config.duration ?? 5;
-    const width = this.config.width ?? 1024;
-    const height = this.config.height ?? 768;
-    const fps = this.config.fps ?? 5;
-
-    while (this.running) {
-      const nowMs = Date.now();
-      const rawFile = `/tmp/watch-desktop-raw-${nowMs}.mp4`;
-      const downsampledFile = `/tmp/watch-desktop-downsampled-${nowMs}.mp4`;
-
-      try {
-        const captured = await recordScreenVideo(rawFile, duration);
-        if (captured && this.running) {
-          const downsampled = await downsampleVideo(rawFile, downsampledFile, width, height, fps);
-          if (downsampled && this.running) {
-            const fs = await import('node:fs/promises');
-            const buffer = await fs.readFile(downsampledFile);
-            const base64 = buffer.toString('base64');
-
-            this.streams.push(streamName, {
-              type: 'chunk',
-              mediaType: 'video/mp4',
-              dataBase64: base64,
-              timestamp: new Date().toISOString(),
-              filename: 'desktop.mp4',
-            });
-          }
-        }
-      } catch (error) {
+  startSegment(): void {
+    if (!this.running || this.current || process.platform !== 'darwin') {
+      return;
+    }
+    const nowMs = Date.now();
+    const rawFile = `/tmp/watch-desktop-raw-${nowMs}.mp4`;
+    const downsampledFile = `/tmp/watch-desktop-downsampled-${nowMs}.mp4`;
+    const proc = spawn('screencapture', ['-x', '-v', rawFile]);
+    const closed = new Promise<number | null>((resolve) => {
+      proc.on('close', code => resolve(code));
+      proc.on('error', error => {
         if (this.running) {
           this.log.append({
             type: 'desktop_capture_error',
             at: new Date().toISOString(),
-            error: {
-              message: error instanceof Error ? error.message : String(error),
-            },
+            error: { message: error instanceof Error ? error.message : String(error) },
           });
         }
-      } finally {
-        try { unlinkSync(rawFile); } catch {}
-        try { unlinkSync(downsampledFile); } catch {}
+        resolve(null);
+      });
+    });
+    this.current = { rawFile, downsampledFile, process: proc, closed, startedAt: new Date() };
+  }
+
+  async finishSegmentAndPush(): Promise<void> {
+    const segment = this.current;
+    this.current = undefined;
+    if (!segment) {
+      return;
+    }
+
+    const streamName = this.config.name ?? 'desktop:capture';
+    const width = this.config.width ?? 1024;
+    const height = this.config.height ?? 768;
+    const fps = this.config.fps ?? 5;
+
+    try {
+      if (!segment.process.killed) {
+        segment.process.kill('SIGINT');
+      }
+      const code = await segment.closed;
+      if (code !== 0) {
+        this.log.append({
+          type: 'desktop_capture_error',
+          at: new Date().toISOString(),
+          error: { message: `Desktop capture exited with code ${code ?? 'unknown'}` },
+        });
+        return;
       }
 
-      if (this.running) {
-        // Sleep 1 second before the next slice
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+      const downsampled = await downsampleVideo(segment.rawFile, segment.downsampledFile, width, height, fps);
+      if (!downsampled) {
+        this.log.append({
+          type: 'desktop_capture_error',
+          at: new Date().toISOString(),
+          error: { message: 'Desktop capture downsampling failed' },
+        });
+        return;
       }
+
+      const fs = await import('node:fs/promises');
+      const buffer = await fs.readFile(segment.downsampledFile);
+      const base64 = buffer.toString('base64');
+      this.streams.push(streamName, {
+        type: 'chunk',
+        mediaType: 'video/mp4',
+        dataBase64: base64,
+        timestamp: new Date().toISOString(),
+        startedAt: segment.startedAt.toISOString(),
+        endedAt: new Date().toISOString(),
+        filename: 'desktop.mp4',
+      });
+    } catch (error) {
+      this.log.append({
+        type: 'desktop_capture_error',
+        at: new Date().toISOString(),
+        error: {
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    } finally {
+      try { unlinkSync(segment.rawFile); } catch {}
+      try { unlinkSync(segment.downsampledFile); } catch {}
+    }
+  }
+
+  private async discardCurrentSegment(): Promise<void> {
+    const segment = this.current;
+    this.current = undefined;
+    if (!segment) {
+      return;
+    }
+    try {
+      if (!segment.process.killed) {
+        segment.process.kill('SIGINT');
+      }
+      await segment.closed;
+    } finally {
+      try { unlinkSync(segment.rawFile); } catch {}
+      try { unlinkSync(segment.downsampledFile); } catch {}
     }
   }
 }
-
 
