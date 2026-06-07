@@ -13,6 +13,9 @@ export type StreamPopContext = {
 const DEFAULT_TEXT_STREAM_CHARS = 4000;
 const INBOX_PREVIEW_CHARS = 240;
 const ERROR_STREAM_MAX_ITEMS = 20;
+const DESKTOP_CAPTURE_SIGINT_TIMEOUT_MS = 5_000;
+const DESKTOP_CAPTURE_SIGTERM_TIMEOUT_MS = 2_000;
+const DESKTOP_CAPTURE_SIGKILL_TIMEOUT_MS = 2_000;
 
 export interface WatchStream {
   readonly name: string;
@@ -957,6 +960,64 @@ export function downsampleVideo(
   });
 }
 
+type TerminateChildProcessResult =
+  | { ok: true; code: number | null }
+  | { ok: false; error: string; code?: number | null };
+
+export async function terminateChildProcess(
+  proc: ChildProcessWithoutNullStreams,
+  closed: Promise<number | null>,
+  timeouts = {
+    sigintMs: DESKTOP_CAPTURE_SIGINT_TIMEOUT_MS,
+    sigtermMs: DESKTOP_CAPTURE_SIGTERM_TIMEOUT_MS,
+    sigkillMs: DESKTOP_CAPTURE_SIGKILL_TIMEOUT_MS,
+  },
+): Promise<TerminateChildProcessResult> {
+  if (proc.exitCode !== null || proc.signalCode !== null) {
+    return { ok: true, code: await closed };
+  }
+
+  const sigint = await signalAndWait(proc, closed, 'SIGINT', timeouts.sigintMs);
+  if (sigint.settled) {
+    return { ok: true, code: sigint.code };
+  }
+
+  const sigterm = await signalAndWait(proc, closed, 'SIGTERM', timeouts.sigtermMs);
+  if (sigterm.settled) {
+    return { ok: true, code: sigterm.code };
+  }
+
+  const sigkill = await signalAndWait(proc, closed, 'SIGKILL', timeouts.sigkillMs);
+  if (sigkill.settled) {
+    return { ok: true, code: sigkill.code };
+  }
+
+  return { ok: false, error: `Child process did not exit after SIGINT, SIGTERM, or SIGKILL within ${timeouts.sigintMs + timeouts.sigtermMs + timeouts.sigkillMs}ms` };
+}
+
+async function signalAndWait(
+  proc: ChildProcessWithoutNullStreams,
+  closed: Promise<number | null>,
+  signal: NodeJS.Signals,
+  timeoutMs: number,
+): Promise<{ settled: true; code: number | null } | { settled: false }> {
+  try {
+    proc.kill(signal);
+  } catch {
+    // The process may have exited between checks; the close promise decides.
+  }
+
+  const result = await Promise.race([
+    closed.then(code => ({ settled: true as const, code })),
+    sleep(timeoutMs).then(() => ({ settled: false as const })),
+  ]);
+  return result;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export class DesktopCaptureBridge {
   private running = false;
   private current:
@@ -1034,15 +1095,20 @@ export class DesktopCaptureBridge {
     const fps = this.config.fps ?? 5;
 
     try {
-      if (!segment.process.killed) {
-        segment.process.kill('SIGINT');
-      }
-      const code = await segment.closed;
-      if (code !== 0) {
+      const terminated = await terminateChildProcess(segment.process, segment.closed);
+      if (!terminated.ok) {
         this.log.append({
           type: 'desktop_capture_error',
           at: new Date().toISOString(),
-          error: { message: `Desktop capture exited with code ${code ?? 'unknown'}` },
+          error: { message: terminated.error },
+        });
+        return;
+      }
+      if (terminated.code !== 0) {
+        this.log.append({
+          type: 'desktop_capture_error',
+          at: new Date().toISOString(),
+          error: { message: `Desktop capture exited with code ${terminated.code ?? 'unknown'}` },
         });
         return;
       }
@@ -1090,10 +1156,14 @@ export class DesktopCaptureBridge {
       return;
     }
     try {
-      if (!segment.process.killed) {
-        segment.process.kill('SIGINT');
+      const terminated = await terminateChildProcess(segment.process, segment.closed);
+      if (!terminated.ok) {
+        this.log.append({
+          type: 'desktop_capture_error',
+          at: new Date().toISOString(),
+          error: { message: `Desktop capture discard failed: ${terminated.error}` },
+        });
       }
-      await segment.closed;
     } finally {
       try { unlinkSync(segment.rawFile); } catch {}
       try { unlinkSync(segment.downsampledFile); } catch {}

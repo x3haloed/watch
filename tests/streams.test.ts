@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { StreamRegistry } from '../src/streams.js';
+import { terminateChildProcess } from '../src/stream-primitives.js';
 import type { ModelCapabilities } from '../src/types.js';
 
 const capabilities: ModelCapabilities = {
@@ -60,4 +62,20 @@ test('restores configured subscriptions from snapshot while preserving new confi
 
   assert.equal(registry.listSubscriptions().includes('clock'), true);
   assert.equal(registry.listSubscriptions().includes('api:test'), true);
+});
+
+test('child process termination escalates when polite signals are ignored', async () => {
+  const proc = spawn(process.execPath, [
+    '-e',
+    'process.on("SIGINT", () => {}); process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);',
+  ]);
+  const closed = new Promise<number | null>(resolve => proc.on('close', code => resolve(code)));
+
+  const result = await terminateChildProcess(proc, closed, {
+    sigintMs: 25,
+    sigtermMs: 25,
+    sigkillMs: 1000,
+  });
+
+  assert.equal(result.ok, true);
 });
