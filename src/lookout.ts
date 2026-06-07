@@ -14,6 +14,7 @@ import { DiscordBridge, parseDiscordAttentionScope } from './discord.js';
 import { Scratchpad } from './scratchpad.js';
 import {
   mediaPlaceholder,
+  mediaTypeFromFilename,
   modelSupportsMedia,
   modalityFromMediaType,
   openUrlMedia,
@@ -1024,6 +1025,16 @@ export class Lookout {
       };
     }
 
+    const providerSupport = promptMediaSupportForModel(model, descriptor.mediaType);
+    if (!providerSupport.ok) {
+      return {
+        ok: false,
+        error: providerSupport.reason,
+        media: descriptor,
+        next_actions: ['Use a different media format, or configure a provider adapter that can serialize this media type.'],
+      };
+    }
+
     const media = await open();
     return {
       ok: true,
@@ -1042,10 +1053,8 @@ export class Lookout {
     | { ok: true; source: 'discord' | 'url'; url: string; filename?: string; mediaType: string; sizeBytes?: number; modality: OpenedMedia['modality'] }
     | { ok: false; error: string } {
     if (input.url?.trim()) {
-      const mediaType = input.mediaType?.trim();
-      if (!mediaType) {
-        return { ok: false, error: 'URL media requires mediaType.' };
-      }
+      const mediaType = input.mediaType?.trim() || mediaTypeFromFilename(input.filename ?? input.url);
+      if (!mediaType) return { ok: false, error: 'URL media requires mediaType or a recognized media filename/URL extension.' };
       return {
         ok: true,
         source: 'url',
@@ -1170,19 +1179,25 @@ ${lines.join('\n')}
     for (const delta of sounding.deltas) {
       const payload = delta.payload as Record<string, unknown>;
       // Camera chunks have dataBase64 + mediaType at the top level
-      if (typeof payload.dataBase64 === 'string' && typeof payload.mediaType === 'string') {
+      if (typeof payload.dataBase64 === 'string' && typeof payload.mediaType === 'string' && shouldAttachSoundingMedia(payload.mediaType, model)) {
         mediaParts.push({ type: 'image', image: payload.dataBase64, mediaType: payload.mediaType });
         const { dataBase64: _d, payload: _p, ...meta } = payload;
         textDeltas.push(`${delta.stream}: ${JSON.stringify(meta)} @ ${delta.at}`);
+      } else if (typeof payload.dataBase64 === 'string' && typeof payload.mediaType === 'string') {
+        const { dataBase64: _d, payload: _p, ...meta } = payload;
+        textDeltas.push(`${delta.stream}: ${JSON.stringify({ ...meta, mediaOmitted: unsupportedSoundingMediaReason(payload.mediaType, model) })} @ ${delta.at}`);
       } else if (Array.isArray(payload.items)) {
         // BufferedStream format: { count, delivery, items: [...] }
         const keptItems: unknown[] = [];
         for (const item of payload.items) {
           const it = item as Record<string, unknown>;
-          if (typeof it.dataBase64 === 'string' && typeof it.mediaType === 'string') {
+          if (typeof it.dataBase64 === 'string' && typeof it.mediaType === 'string' && shouldAttachSoundingMedia(it.mediaType, model)) {
             mediaParts.push({ type: 'image', image: it.dataBase64, mediaType: it.mediaType });
             const { dataBase64: _d, ...meta } = it;
             keptItems.push(meta);
+          } else if (typeof it.dataBase64 === 'string' && typeof it.mediaType === 'string') {
+            const { dataBase64: _d, ...meta } = it;
+            keptItems.push({ ...meta, mediaOmitted: unsupportedSoundingMediaReason(it.mediaType, model) });
           } else {
             keptItems.push(item);
           }
@@ -1418,6 +1433,46 @@ function usesOpenAICompatibleChatProvider(model: ResolvedModel): boolean {
   return model.provider === 'openai-compatible' || model.provider === 'openrouter';
 }
 
+function shouldAttachSoundingMedia(mediaType: string, model: ResolvedModel): boolean {
+  const modality = modalityFromMediaType(mediaType);
+  return modality === 'image' && modelSupportsMedia(model, modality) && promptMediaSupportForModel(model, mediaType).ok;
+}
+
+function unsupportedSoundingMediaReason(mediaType: string, model: ResolvedModel): string {
+  const modality = modalityFromMediaType(mediaType);
+  if (modality !== 'image') {
+    return `stream media type ${mediaType} is ${modality}; Sounding media attachment currently supports image frames only`;
+  }
+  if (!modelSupportsMedia(model, modality)) {
+    return `active model ${model.id} does not support ${modality} input`;
+  }
+  const providerSupport = promptMediaSupportForModel(model, mediaType);
+  return providerSupport.ok ? 'media omitted for an unknown compatibility reason' : providerSupport.reason;
+}
+
+function promptMediaSupportForModel(model: ResolvedModel, mediaType: string): { ok: true } | { ok: false; reason: string } {
+  const normalized = mediaType.toLowerCase().split(';')[0]?.trim() ?? '';
+  if (!usesOpenAICompatibleChatProvider(model)) {
+    return { ok: true };
+  }
+  if (normalized.startsWith('image/')) {
+    return { ok: true };
+  }
+  if (normalized === 'audio/wav' || normalized === 'audio/mp3' || normalized === 'audio/mpeg') {
+    return { ok: true };
+  }
+  if (normalized === 'application/pdf') {
+    return { ok: true };
+  }
+  if (normalized.startsWith('text/')) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    reason: `The OpenAI-compatible provider cannot serialize ${mediaType} as model input. It currently supports images, WAV/MP3 audio, PDFs, and text files.`,
+  };
+}
+
 function moveToolResultMediaToUserMessages(messages: ModelMessage[]): ModelMessage[] {
   const moved: ModelMessage[] = [];
   for (const message of messages) {
@@ -1557,7 +1612,7 @@ function replaceUnsupportedMediaForModel(value: unknown, model: ResolvedModel): 
 
 function mediaTypeFromRecord(record: Record<string, unknown>): string | undefined {
   if (
-    (record.type === 'media' || record.type === 'image-data' || record.type === 'file-data')
+    (record.type === 'media' || record.type === 'image-data' || record.type === 'file-data' || record.type === 'image' || record.type === 'file')
     && typeof record.mediaType === 'string'
   ) {
     return record.mediaType;
@@ -1580,11 +1635,17 @@ function mediaNameFromRecord(record: Record<string, unknown>): string {
   if (typeof record.filename === 'string' && record.filename.trim()) {
     return record.filename.trim();
   }
+  if (typeof record.image === 'string' && record.image.trim()) {
+    return record.image.trim().startsWith('data:') ? 'inline image data' : record.image.trim();
+  }
   if (typeof record.path === 'string' && record.path.trim()) {
     return record.path.trim();
   }
   if (typeof record.url === 'string' && record.url.trim()) {
     return record.url.trim();
+  }
+  if (typeof record.data === 'string' && record.data.trim().startsWith('http')) {
+    return record.data.trim();
   }
   const mediaType = typeof record.mediaType === 'string' ? record.mediaType : 'media';
   return mediaType;
