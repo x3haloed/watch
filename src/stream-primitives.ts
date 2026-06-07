@@ -3,16 +3,7 @@ import { basename } from 'node:path';
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AudioStreamSnapshot, DesktopCaptureConfig, JsonObject, ModelCapabilities, StreamDelta, TextStreamSnapshot, VideoStreamSnapshot } from './types.js';
-
-export type StoredMessage = {
-  id: number;
-  medium: string;
-  source: string;
-  subject: string;
-  content: string;
-  receivedAt: string;
-  metadata?: JsonObject;
-};
+import type { MessageInbox, StoredMessage } from './message-inbox.js';
 
 export type StreamPopContext = {
   now: Date;
@@ -66,7 +57,7 @@ export class InboxStream implements WatchStream {
   readonly waking = true;
   private pendingIds: number[] = [];
 
-  constructor(private readonly messages: MessageStore) {}
+  constructor(private readonly messages: MessageInbox) {}
 
   push(payload: JsonObject): void {
     const message = this.messages.add({
@@ -424,70 +415,8 @@ export function clampChar(value: number, totalChars: number): number {
   return Math.max(0, Math.min(totalChars, Math.floor(value)));
 }
 
-export type MessageEntry = {
-  id: number;
-  medium: string;
-  source: string;
-  subject: string;
-  receivedAt: string;
-};
-
-export class MessageStore {
-  private nextId = 1;
-  private readonly messages = new Map<number, StoredMessage>();
-
-  add(input: { medium: string; source: string; subject?: string; content: string; metadata?: JsonObject }): StoredMessage {
-    const id = this.nextId++;
-    const content = input.content;
-    const message: StoredMessage = {
-      id,
-      medium: input.medium,
-      source: input.source,
-      subject: input.subject?.trim() || preview(content),
-      content,
-      receivedAt: new Date().toISOString(),
-      metadata: input.metadata,
-    };
-    this.messages.set(id, message);
-    return message;
-  }
-
-  get(id: number): StoredMessage | undefined {
-    return this.messages.get(id);
-  }
-
-  list(medium: string, page: number, pageSize: number): { entries: MessageEntry[]; page: number; pageSize: number; total: number; totalPages: number } {
-    const safePageSize = Math.max(1, Math.min(50, Math.floor(pageSize)));
-    const all = [...this.messages.values()]
-      .filter(message => message.medium === medium)
-      .sort((a, b) => b.id - a.id);
-    const totalPages = Math.max(1, Math.ceil(all.length / safePageSize));
-    const safePage = Math.max(1, Math.min(totalPages, Math.floor(page)));
-    const start = (safePage - 1) * safePageSize;
-    return {
-      entries: all.slice(start, start + safePageSize).map(message => ({
-        id: message.id,
-        medium: message.medium,
-        source: message.source,
-        subject: message.subject,
-        receivedAt: message.receivedAt,
-      })),
-      page: safePage,
-      pageSize: safePageSize,
-      total: all.length,
-      totalPages,
-    };
-  }
-}
-
 export function isJsonObject(value: unknown): value is JsonObject {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-function preview(content: string): string {
-  const text = content.replace(/\s+/g, ' ').trim();
-  if (!text) return '(empty message)';
-  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
 
 export function hasParentTraversal(path: string): boolean {
@@ -1171,4 +1100,3 @@ export class DesktopCaptureBridge {
     }
   }
 }
-

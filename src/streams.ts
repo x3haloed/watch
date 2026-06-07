@@ -7,7 +7,6 @@ import {
   ClockStream,
   ErrorStream,
   InboxStream,
-  MessageStore,
   TextFileStream,
   VideoFileStream,
   AudioFileStream,
@@ -22,17 +21,16 @@ import {
   readFileSyncUtf8,
   validCharsPerSounding,
   validMaxPayloads,
-  type MessageEntry,
-  type StoredMessage,
   type StreamPopContext,
   type WatchStream,
 } from './stream-primitives.js';
 import { WebApiStream } from './web-api-stream.js';
+import { InMemoryMessageInbox, type MessageEntry, type MessageInbox, type StoredMessage } from './message-inbox.js';
 
-export type { MessageEntry, StoredMessage, StreamPopContext, WatchStream } from './stream-primitives.js';
+export type { MessageEntry, MessageInbox, StoredMessage, StreamPopContext, WatchStream };
 
 export class StreamRegistry {
-  private readonly messages = new MessageStore();
+  private readonly messages: MessageInbox;
   private readonly streams = new Map<string, WatchStream>();
   private readonly subscriptions = new Set<string>();
   private readonly configuredSubscriptions = new Set<string>();
@@ -43,7 +41,9 @@ export class StreamRegistry {
     initialState?: StreamRegistrySnapshot,
     private readonly onGazeChanged: (snapshot: StreamRegistrySnapshot) => void = () => {},
     userNotes?: { path: string; maxChars: number },
+    inbox: MessageInbox = new InMemoryMessageInbox(),
   ) {
+    this.messages = inbox;
     this.streams.set('clock', new ClockStream());
     this.streams.set('inbox', new InboxStream(this.messages));
     this.streams.set('errors', new ErrorStream());
@@ -68,6 +68,10 @@ export class StreamRegistry {
     }
 
     this.restore(initialState);
+  }
+
+  get inbox(): MessageInbox {
+    return this.messages;
   }
 
   subscribe(stream: string): boolean {
@@ -136,8 +140,6 @@ export class StreamRegistry {
       charsPerSounding,
       startChar,
       subscribed: !stream.isDone(),
-      message: `text stream for file ${basename(file)} successful. total of ${content.length} chars. ${charsPerSounding} chars per sounding. First chapter starts now:`,
-      text: `text stream for file ${basename(file)} successful. total of ${content.length} chars. ${charsPerSounding} chars per sounding. First chapter starts now:\n\n${typeof firstChunk?.chunk === 'string' ? firstChunk.chunk : ''}`,
       firstChunk,
       next_actions: stream.isDone()
         ? ['Text stream reached EOF in the first chunk. Call text_stream_open with resumeAtChar to reread from another position.']
@@ -208,7 +210,6 @@ export class StreamRegistry {
       videoTime: startSecond,
       duration,
       subscribed: !stream.isDone(),
-      message: `video stream for file ${basename(file)} opened successfully. total duration: ${duration}s. Fps: ${fps}, speed: ${speed}x. Initial frame extracted:`,
       firstChunk,
       next_actions: stream.isDone()
         ? ['Video stream reached duration end in the first chunk. Call video_stream_open with resumeAtSecond to read from another position.']
@@ -281,7 +282,6 @@ export class StreamRegistry {
       audioTime: startSecond,
       duration,
       subscribed: !stream.isDone(),
-      message: `audio stream for file ${basename(file)} opened successfully. total duration: ${duration}s. speed: ${speed}x, sampleRate: ${sampleRate}Hz, channels: ${channels}, format: ${format}. Initial audio chunk extracted:`,
       firstChunk,
       next_actions: stream.isDone()
         ? ['Audio stream reached duration end in the first chunk. Call audio_stream_open with resumeAtSecond to read from another position.']

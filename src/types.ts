@@ -209,7 +209,7 @@ export type WatchEvent =
   | { type: 'terminal_finished'; at: string; soundingId: string; sessionId: string; exitCode: number | null; durationMs: number; output: string; error?: string }
   | { type: 'terminal_input'; at: string; soundingId: string; sessionId: string; text: string }
   | { type: 'terminal_killed'; at: string; soundingId: string; sessionId: string; reason?: string }
-  | { type: 'cli_message'; at: string; soundingId: string; medium?: string; replyToId?: number; message: string }
+  | { type: 'cli_message'; at: string; soundingId: string; medium?: string; replyToId?: number; message: string; attachments?: string[] }
   | { type: 'subscription_changed'; at: string; stream: string; subscribed: boolean }
   | { type: 'discord_started'; at: string; userId: string; username: string }
   | { type: 'discord_stopped'; at: string; reason: string }
