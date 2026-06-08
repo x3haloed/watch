@@ -55,6 +55,10 @@
   "maxCffMs": 300000,
   "modelTimeoutMs": 120000,
   "models": {
+    "codex:gpt-5.1-codex": {
+      "provider": "codex-cli",
+      "model": "gpt-5.1-codex"
+    },
     "openrouter:deepseek/deepseek-v4-flash": {
       "provider": "openrouter",
       "model": "deepseek/deepseek-v4-flash",
