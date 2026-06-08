@@ -130,7 +130,7 @@ export type DiscordPolicySnapshot = {
   watchedThreads: string[];
 };
 
-export type ModelProvider = 'openrouter' | 'openai-compatible' | 'codex-cli';
+export type ModelProvider = 'openrouter' | 'openai-compatible';
 
 export type ModelCapabilities = {
   tools: boolean;

@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { codexCli } from 'ai-sdk-provider-codex-cli';
 import type { LanguageModel } from 'ai';
 import { configPath, ensureInstanceDir, modelsDevCachePath, stateDir, statePath } from './paths.js';
 import type { ModelCapabilities, ModelConfig, ModelProvider, ResolvedModel } from './types.js';
@@ -44,10 +43,6 @@ const DEFAULT_MODELS: Record<string, Omit<ModelConfig, 'id'>> = {
     baseURL: 'http://localhost:11434/v1',
     apiKeyEnv: 'OLLAMA_API_KEY',
   },
-  'codex:gpt-5.1-codex': {
-    provider: 'codex-cli',
-    model: 'gpt-5.1-codex',
-  },
 };
 
 const PROVIDER_TO_MODELS_DEV: Record<string, string> = {
@@ -55,7 +50,6 @@ const PROVIDER_TO_MODELS_DEV: Record<string, string> = {
   openai: 'openai',
   anthropic: 'anthropic',
   google: 'google',
-  'codex-cli': 'openai',
 };
 
 export class ModelRegistry {
@@ -150,10 +144,6 @@ export class ModelRegistry {
   }
 
   createLanguageModel(model: ResolvedModel): LanguageModel {
-    if (model.provider === 'codex-cli') {
-      return codexCli(model.model) as LanguageModel;
-    }
-
     if (model.provider === 'openrouter') {
       return createOpenAICompatible({
         name: 'openrouter',
@@ -397,14 +387,6 @@ function inferModelConfig(id: string): ModelConfig {
     };
   }
 
-  if (id.startsWith('codex:')) {
-    return {
-      id,
-      provider: 'codex-cli',
-      model: id.slice('codex:'.length),
-    };
-  }
-
   return {
     id,
     provider: 'openrouter',
@@ -480,12 +462,7 @@ function conservativeCapabilities(provider: ModelProvider): ModelCapabilities {
     audio: false,
     video: false,
     pdf: false,
-    source:
-      provider === 'openai-compatible'
-        ? 'conservative-openai-compatible'
-        : provider === 'codex-cli'
-          ? 'conservative-codex-cli'
-          : 'conservative',
+    source: provider === 'openai-compatible' ? 'conservative-openai-compatible' : 'conservative',
   };
 }
 
