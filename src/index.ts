@@ -37,10 +37,10 @@ async function main(): Promise<void> {
       print(configFile.error);
       exit(1);
     }
-    if (await canReachDaemon(cloneRoot)) {
-      await attach(cloneRoot);
+    if (await canReachDaemon(instanceRoot)) {
+      await attach(instanceRoot);
     } else {
-      await waitForDaemonAndAttach(cloneRoot, configFile.filePath);
+      await waitForDaemonAndAttach(cloneRoot, instanceRoot);
     }
     return;
   }
@@ -50,35 +50,35 @@ async function main(): Promise<void> {
       print(configFile.error);
       exit(1);
     }
-    await runDaemon(defaultConfig(cloneRoot, instanceRoot, configFile.file, args));
+    await runDaemon(defaultConfig(instanceRoot, cloneRoot, configFile.file, args));
     return;
   }
 
   if (area === 'send') {
     const message = [action, ...args].filter(Boolean).join(' ');
-    const response = await sendControl(cloneRoot, { command: 'send', message, source: 'cli' });
+    const response = await sendControl(instanceRoot, { command: 'send', message, source: 'cli' });
     print(response);
     return;
   }
 
   if (area === 'status') {
-    print(await sendControl(cloneRoot, { command: 'status' }));
+    print(await sendControl(instanceRoot, { command: 'status' }));
     return;
   }
 
   if (area === 'sound') {
-    print(await sendControl(cloneRoot, { command: 'sound' }));
+    print(await sendControl(instanceRoot, { command: 'sound' }));
     return;
   }
 
   if (area === 'stop') {
-    print(await sendControl(cloneRoot, { command: 'stop' }));
+    print(await sendControl(instanceRoot, { command: 'stop' }));
     return;
   }
 
   if (area === 'reboot') {
     const ledgerEntry = [action, ...args].filter(Boolean).join(' ').trim() || undefined;
-    print(await sendControl(cloneRoot, { command: 'reboot', ledgerEntry }));
+    print(await sendControl(instanceRoot, { command: 'reboot', ledgerEntry }));
     return;
   }
 
@@ -100,7 +100,7 @@ async function main(): Promise<void> {
       print(configFile.error);
       exit(1);
     }
-    await attach(cloneRoot);
+    await attach(instanceRoot);
     return;
   }
 
@@ -108,16 +108,16 @@ async function main(): Promise<void> {
   exit(1);
 }
 
-async function canReachDaemon(cloneRoot: string): Promise<boolean> {
+async function canReachDaemon(instanceRoot: string): Promise<boolean> {
   try {
-    const response = await sendControl(cloneRoot, { command: 'status' });
+    const response = await sendControl(instanceRoot, { command: 'status' });
     return response.ok;
   } catch {
     return false;
   }
 }
 
-async function waitForDaemonAndAttach(cloneRoot: string, configFilePath: string): Promise<void> {
+async function waitForDaemonAndAttach(cloneRoot: string, instanceRoot: string): Promise<void> {
   process.stdout.write('\x1b[?25l');
   let attempts = 0;
   try {
@@ -130,14 +130,14 @@ No Watch daemon found yet.
 Waiting to auto-attach... (${attempts})
 
 Start one in another terminal:
-  cd ${dirname(cloneRoot)}
-  ${configFilePath} daemon start --min-cff-ms 10000 --max-cff-ms 10000
+  cd ${cloneRoot}
+  npx tsx src/index.ts daemon start --min-cff-ms 10000 --max-cff-ms 10000
 
 Press Ctrl-C to stop waiting.
 `);
       await sleep(1000);
-      if (await canReachDaemon(cloneRoot)) {
-        await attach(cloneRoot);
+      if (await canReachDaemon(instanceRoot)) {
+        await attach(instanceRoot);
         return;
       }
     }
@@ -150,14 +150,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function defaultConfig(cloneRoot: string, instanceRoot: string, file: WatchConfigFile, args: string[]): WatchConfig {
+function defaultConfig(instanceRoot: string, cloneRoot: string, file: WatchConfigFile, args: string[]): WatchConfig {
   const defaultModel = stringFlag(args, '--model') ?? file.defaultModel;
   if (!defaultModel?.trim()) {
     throw new Error('No default model configured. Set defaultModel in config.json or pass --model.');
   }
   return {
-    cloneRoot,
     instanceRoot,
+    cloneRoot,
     minCffMs: numberFlag(args, '--min-cff-ms') ?? file.minCffMs ?? 2_000,
     maxCffMs: numberFlag(args, '--max-cff-ms') ?? file.maxCffMs ?? 30_000,
     modelTimeoutMs: numberFlag(args, '--model-timeout-ms') ?? 120_000,
@@ -331,6 +331,6 @@ function shortJson(value: unknown): string {
   return shortText(JSON.stringify(value));
 }
 
-async function attach(cloneRoot: string): Promise<void> {
-  await runOperatorConsole(cloneRoot);
+async function attach(instanceRoot: string): Promise<void> {
+  await runOperatorConsole(instanceRoot);
 }
