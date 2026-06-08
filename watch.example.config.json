@@ -1,11 +1,12 @@
 {
   "defaultModel": "openrouter:openrouter/owl-alpha",
   "restingModel": "openrouter:openrouter/owl-alpha",
+  "ledgerPath": "ledger.md",
   "restAfterNoToolSoundings": 3,
   "estimatedTokenWarningThreshold": 200000,
   "scratchpad": {
     "enabled": true,
-    "dir": ".watch/scratchpad",
+    "dir": "scratchpad",
     "agentFile": "AGENT.md",
     "userFile": "USER.md",
     "agentMaxChars": 2000,

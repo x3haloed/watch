@@ -44,7 +44,7 @@ export class WatchRuntime {
     this.scratchpad = config.scratchpad.enabled === false ? undefined : new Scratchpad(config.instanceRoot, config.scratchpad);
     this.streams = new StreamRegistry(
       config.webApiStreams,
-      config.cloneRoot,
+      config.instanceRoot,
       this.gazeStore.streams,
       snapshot => this.gazeStore.updateStreams(snapshot),
       !this.scratchpad
@@ -79,7 +79,6 @@ export class WatchRuntime {
       this.log,
       this.models,
       config.noModel,
-      config.cloneRoot,
       config.instanceRoot,
       this.restingModelId,
       config.restAfterNoToolSoundings,
