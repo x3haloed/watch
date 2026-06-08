@@ -1,0 +1,77 @@
+{
+  "defaultModel": "openrouter:openrouter/owl-alpha",
+  "restingModel": "openrouter:openrouter/owl-alpha",
+  "restAfterNoToolSoundings": 3,
+  "estimatedTokenWarningThreshold": 200000,
+  "scratchpad": {
+    "enabled": true,
+    "dir": ".watch/scratchpad",
+    "agentFile": "AGENT.md",
+    "userFile": "USER.md",
+    "agentMaxChars": 2000,
+    "userMaxChars": 2000
+  },
+  "webApiStreams": [
+    {
+      "name": "usgs:earthquakes:all_hour",
+      "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
+      "intervalMs": 900000,
+      "subscribed": false,
+      "waking": false
+    },
+    {
+      "name": "tinyplace:main",
+      "url": "https://tinyplace.chadjkirby.workers.dev/canvas",
+      "intervalMs": 5000,
+      "subscribed": true,
+      "waking": false,
+      "kind": "tinyplace_canvas"
+    }
+  ],
+  "cameraStreams": [
+    {
+      "name": "camera:motion",
+      "url": "ws://127.0.0.1:8765/",
+      "mode": "stills",
+      "fps": 2,
+      "motionGate": true,
+      "subscribed": false,
+      "waking": true,
+      "maxBufferedChunks": 3
+    }
+  ],
+  "desktopCapture": {
+    "enabled": true,
+    "name": "desktop:capture",
+    "fps": 3,
+    "width": 1024,
+    "height": 768,
+    "waking": false,
+    "subscribed": false,
+    "maxBufferedChunks": 3
+  },
+  "minCffMs": 10000,
+  "maxCffMs": 300000,
+  "modelTimeoutMs": 120000,
+  "models": {
+    "openrouter:deepseek/deepseek-v4-flash": {
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4-flash",
+      "apiKeyEnv": "OPENROUTER_API_KEY"
+    },
+    "openrouter:openrouter/owl-alpha": {
+      "provider": "openrouter",
+      "model": "openrouter/owl-alpha",
+      "apiKeyEnv": "OPENROUTER_API_KEY"
+    },
+    "openrouter:xiaomi/mimo-v2.5": {
+      "provider": "openrouter",
+      "model": "xiaomi/mimo-v2.5",
+      "apiKeyEnv": "OPENROUTER_API_KEY"
+    }
+  },
+  "discord": {
+    "enabled": true,
+    "tokenEnv": "DISCORD_BOT_TOKEN"
+  }
+}
