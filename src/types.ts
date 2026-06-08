@@ -1,7 +1,8 @@
 export type JsonObject = Record<string, unknown>;
 
 export type WatchConfig = {
-  repoRoot: string;
+  cloneRoot: string;
+  instanceRoot: string;
   minCffMs: number;
   maxCffMs: number;
   modelTimeoutMs: number;

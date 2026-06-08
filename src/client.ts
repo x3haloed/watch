@@ -2,8 +2,8 @@ import { createConnection } from 'node:net';
 import { socketPath } from './paths.js';
 import type { ControlRequest, ControlResponse } from './types.js';
 
-export async function sendControl(repoRoot: string, request: ControlRequest): Promise<ControlResponse> {
-  const path = socketPath(repoRoot);
+export async function sendControl(cloneRoot: string, request: ControlRequest): Promise<ControlResponse> {
+  const path = socketPath(cloneRoot);
 
   return await new Promise<ControlResponse>((resolve, reject) => {
     const socket = createConnection(path);

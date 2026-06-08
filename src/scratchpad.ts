@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import type { ScratchpadConfig } from './types.js';
 
-const DEFAULT_SCRATCHPAD_DIR = '.watch/scratchpad';
+const DEFAULT_SCRATCHPAD_DIR = 'scratchpad';
 const DEFAULT_AGENT_FILE = 'AGENT.md';
 const DEFAULT_USER_FILE = 'USER.md';
 const DEFAULT_AGENT_MAX_CHARS = 6000;
@@ -19,8 +19,8 @@ export class Scratchpad {
   readonly paths: ScratchpadPaths;
   private currentAgentPromptContent: string;
 
-  constructor(repoRoot: string, config: ScratchpadConfig = {}) {
-    this.paths = resolveScratchpadPaths(repoRoot, config);
+  constructor(instanceRoot: string, config: ScratchpadConfig = {}) {
+    this.paths = resolveScratchpadPaths(instanceRoot, config);
     ensureFile(this.paths.agentPath);
     ensureFile(this.paths.userPath);
     this.currentAgentPromptContent = this.readAgentForPrompt();
@@ -72,8 +72,8 @@ export class Scratchpad {
   }
 }
 
-export function resolveScratchpadPaths(repoRoot: string, config: ScratchpadConfig = {}): ScratchpadPaths {
-  const dir = resolveFrom(repoRoot, config.dir ?? DEFAULT_SCRATCHPAD_DIR);
+export function resolveScratchpadPaths(instanceRoot: string, config: ScratchpadConfig = {}): ScratchpadPaths {
+  const dir = resolveFrom(instanceRoot, config.dir ?? DEFAULT_SCRATCHPAD_DIR);
   const agentPath = resolveFrom(dir, config.agentFile ?? DEFAULT_AGENT_FILE);
   const userPath = resolveFrom(dir, config.userFile ?? DEFAULT_USER_FILE);
   return {

@@ -1,3 +1,21 @@
+## Instance Layout
+
+Watch now expects to run from inside a bare clone at `~/.watch/<name>/watch/`.
+The parent directory is the instance root and must contain `config.json`.
+
+Example layout:
+
+```text
+~/.watch/<name>/
+  config.json
+  state/
+  logs/
+  scratchpad/
+  watch/
+```
+
+Relative paths in `config.json` resolve from the instance root.
+
 **Contributors**
 
 - **Cove** — Named the stateless-between-cycles design constraint. Contributed the momentum-check framing for model downgrade decisions (attention surface expanding vs contracting as the signal, not arbitrary timers). Worked through model-agnostic frame properties with Aster and Finn. Proposed the two-pass memory architecture: generous write filter + selective consolidation filter, with the temporal gap between them as where calibration happens.

@@ -67,7 +67,8 @@ export class Lookout {
     private readonly log: EventLog,
     private readonly models: ModelRegistry,
     private readonly noModel: boolean,
-    repoRoot: string,
+    cloneRoot: string,
+    instanceRoot: string,
     restingModelId?: string,
     restAfterNoToolSoundings = 3,
     ledgerPath?: string,
@@ -75,14 +76,14 @@ export class Lookout {
     private readonly discord?: DiscordBridge,
     private readonly scratchpad?: Scratchpad,
   ) {
-    this.cwd = repoRoot;
-    this.fileTools = new RepoFileTools(repoRoot);
-    this.skills = new SkillLibrary(repoRoot);
-    this.terminalTools = new TerminalTools(repoRoot, log);
+    this.cwd = cloneRoot;
+    this.fileTools = new RepoFileTools(cloneRoot);
+    this.skills = new SkillLibrary(cloneRoot);
+    this.terminalTools = new TerminalTools(cloneRoot, log);
     this.media = new MediaService(this.fileTools, streams.inbox, models);
     this.prompt = new SoundingPromptBuilder({
-      cwd: repoRoot,
-      contextPrompt: buildContextPrompt(repoRoot),
+      cwd: cloneRoot,
+      contextPrompt: buildContextPrompt(cloneRoot),
       models,
       skills: this.skills,
       listSubscriptions: () => this.streams.listSubscriptions(),
@@ -94,7 +95,7 @@ export class Lookout {
       scratchpad,
     });
     this.session = new SessionController({
-      cwd: repoRoot,
+      cwd: instanceRoot,
       ledgerPath,
       messages: this.messages,
       scratchpad,

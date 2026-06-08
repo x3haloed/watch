@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { ensureWatchDir, statePath } from './paths.js';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { ensureInstanceDir, stateDir, statePath } from './paths.js';
 import type { DiscordPolicySnapshot, StreamRegistrySnapshot } from './types.js';
 
 export type GazeState = {
@@ -14,8 +14,9 @@ export type GazeState = {
 export class GazeStore {
   private state: GazeState;
 
-  constructor(private readonly repoRoot: string) {
-    ensureWatchDir(repoRoot);
+  constructor(private readonly instanceRoot: string) {
+    ensureInstanceDir(instanceRoot);
+    mkdirSync(stateDir(instanceRoot), { recursive: true });
     this.state = this.read();
   }
 
@@ -40,7 +41,7 @@ export class GazeStore {
   }
 
   private read(): GazeState {
-    const path = statePath(this.repoRoot);
+    const path = statePath(this.instanceRoot);
     if (!existsSync(path)) {
       return emptyState();
     }
@@ -69,7 +70,7 @@ export class GazeStore {
       streams: next.streams as StreamRegistrySnapshot | undefined,
       discord: next.discord as DiscordPolicySnapshot | undefined,
     };
-    writeFileSync(statePath(this.repoRoot), `${JSON.stringify(this.state, null, 2)}\n`, 'utf8');
+    writeFileSync(statePath(this.instanceRoot), `${JSON.stringify(this.state, null, 2)}\n`, 'utf8');
   }
 }
 

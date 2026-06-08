@@ -1,14 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
 import { createServer, Socket } from 'node:net';
 import { spawn } from 'node:child_process';
-import { daemonLockPath, ensureWatchDir, socketPath } from './paths.js';
+import { daemonLockPath, ensureInstanceDir, socketPath, stateDir } from './paths.js';
 import type { ControlRequest, ControlResponse, WatchConfig } from './types.js';
 import { WatchRuntime } from './runtime.js';
 import { EventLog } from './event-log.js';
 
 export async function runDaemon(config: WatchConfig): Promise<void> {
-  const path = socketPath(config.repoRoot);
-  const lock = acquireDaemonLock(config.repoRoot);
+  const path = socketPath(config.instanceRoot);
+  const lock = acquireDaemonLock(config.instanceRoot);
   process.once('exit', () => lock.release());
   let stopping = false;
   let rebooting = false;
@@ -35,7 +35,7 @@ export async function runDaemon(config: WatchConfig): Promise<void> {
     removeSocket(path);
     lock.release();
     if (restart) {
-      spawnReplacementDaemon(config.repoRoot);
+      spawnReplacementDaemon(config.cloneRoot);
     }
     process.exit(0);
   }
@@ -85,15 +85,16 @@ type DaemonLock = {
   release: () => void;
 };
 
-function acquireDaemonLock(repoRoot: string): DaemonLock {
-  ensureWatchDir(repoRoot);
-  const path = daemonLockPath(repoRoot);
+function acquireDaemonLock(instanceRoot: string): DaemonLock {
+  ensureInstanceDir(instanceRoot);
+  mkdirSync(stateDir(instanceRoot), { recursive: true });
+  const path = daemonLockPath(instanceRoot);
   while (true) {
     try {
       mkdirSync(path, { recursive: false });
       writeFileSync(
         `${path}/owner.json`,
-        JSON.stringify({ pid: process.pid, repoRoot, startedAt: new Date().toISOString() }, null, 2),
+        JSON.stringify({ pid: process.pid, instanceRoot, startedAt: new Date().toISOString() }, null, 2),
       );
       return {
         release: () => {
@@ -110,7 +111,7 @@ function acquireDaemonLock(repoRoot: string): DaemonLock {
       }
       const owner = readLockOwner(path);
       if (owner.pid !== undefined && isProcessAlive(owner.pid)) {
-        new EventLog(repoRoot).append({
+        new EventLog(instanceRoot).append({
           type: 'daemon_start_blocked',
           at: new Date().toISOString(),
           pid: owner.pid,
@@ -118,7 +119,7 @@ function acquireDaemonLock(repoRoot: string): DaemonLock {
           reason: `another daemon is already running for this repo root (pid ${owner.pid})`,
         });
         throw new Error(
-          `Watch daemon already running for ${repoRoot} (pid ${owner.pid}). Stop it before starting another daemon in this directory.`,
+          `Watch daemon already running for ${instanceRoot} (pid ${owner.pid}). Stop it before starting another daemon in this directory.`,
         );
       }
       rmSync(path, { recursive: true, force: true });

@@ -72,7 +72,7 @@ export class MediaService {
         recommendedModels,
         next_actions: recommendedModels.length
           ? [`Call handle_with_model with modelId "${recommendedModels[0]}", then call open_media again.`]
-          : ['No configured model currently advertises support for this modality. Add one to watch.config.json or choose a different media item.'],
+          : ['No configured model currently advertises support for this modality. Add one to config.json or choose a different media item.'],
       };
     }
 

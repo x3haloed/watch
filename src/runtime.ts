@@ -40,18 +40,18 @@ export class WatchRuntime {
   private pendingRestModelBlockedNotice: RestModelBlockedNotice | undefined;
 
   constructor(private readonly config: WatchConfig, private readonly requestReboot: (source: 'tool' | 'control') => void = () => {}) {
-    this.gazeStore = new GazeStore(config.repoRoot);
-    this.scratchpad = config.scratchpad.enabled === false ? undefined : new Scratchpad(config.repoRoot, config.scratchpad);
+    this.gazeStore = new GazeStore(config.instanceRoot);
+    this.scratchpad = config.scratchpad.enabled === false ? undefined : new Scratchpad(config.instanceRoot, config.scratchpad);
     this.streams = new StreamRegistry(
       config.webApiStreams,
-      config.repoRoot,
+      config.cloneRoot,
       this.gazeStore.streams,
       snapshot => this.gazeStore.updateStreams(snapshot),
       !this.scratchpad
         ? undefined
         : { path: this.scratchpad.paths.userPath, maxChars: this.scratchpad.paths.userMaxChars },
     );
-    this.log = new EventLog(config.repoRoot);
+    this.log = new EventLog(config.instanceRoot);
     this.cameraStreams = registerCameraStreams(config.cameraStreams, this.streams, this.log);
     if (config.desktopCapture && config.desktopCapture.enabled !== false) {
       this.streams.registerBufferedStream(config.desktopCapture.name || 'desktop:capture', {
@@ -63,7 +63,7 @@ export class WatchRuntime {
     } else {
       this.desktopCaptureBridge = undefined;
     }
-    this.models = ModelRegistry.load(config.repoRoot, config.defaultModel, config.availableModels);
+    this.models = ModelRegistry.load(config.instanceRoot, config.defaultModel, config.availableModels);
     this.discord = new DiscordBridge(
       config.discord,
       this.streams,
@@ -79,7 +79,8 @@ export class WatchRuntime {
       this.log,
       this.models,
       config.noModel,
-      config.repoRoot,
+      config.cloneRoot,
+      config.instanceRoot,
       this.restingModelId,
       config.restAfterNoToolSoundings,
       config.ledgerPath,

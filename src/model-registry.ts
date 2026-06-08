@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';
-import { configPath, ensureWatchDir, modelsDevCachePath, statePath } from './paths.js';
+import { configPath, ensureInstanceDir, modelsDevCachePath, stateDir, statePath } from './paths.js';
 import type { ModelCapabilities, ModelConfig, ModelProvider, ResolvedModel } from './types.js';
 
 type WatchConfigFile = {
@@ -58,7 +58,7 @@ export class ModelRegistry {
   private modelsDevCache: ModelsDevRegistry | undefined;
 
   private constructor(
-    private readonly repoRoot: string,
+    private readonly instanceRoot: string,
     defaultModel: string,
     models: ModelConfig[],
   ) {
@@ -69,8 +69,8 @@ export class ModelRegistry {
     }
   }
 
-  static load(repoRoot: string, cliModel: string, cliModels?: string[]): ModelRegistry {
-    const file = readConfigFile(repoRoot);
+  static load(instanceRoot: string, cliModel: string, cliModels?: string[]): ModelRegistry {
+    const file = readConfigFile(instanceRoot);
     const modelEntries = new Map<string, ModelConfig>();
 
     for (const [id, model] of Object.entries(DEFAULT_MODELS)) {
@@ -97,13 +97,13 @@ export class ModelRegistry {
 
     const defaultModel = cliModel || file.defaultModel;
     if (!defaultModel?.trim()) {
-      throw new Error('No default model configured. Set defaultModel in watch.config.json or pass --model.');
+      throw new Error('No default model configured. Set defaultModel in config.json or pass --model.');
     }
     if (!modelEntries.has(defaultModel)) {
       modelEntries.set(defaultModel, inferModelConfig(defaultModel));
     }
 
-    return new ModelRegistry(repoRoot, defaultModel, [...modelEntries.values()]);
+    return new ModelRegistry(instanceRoot, defaultModel, [...modelEntries.values()]);
   }
 
   listModelIds(): string[] {
@@ -219,7 +219,7 @@ export class ModelRegistry {
       return this.modelsDevCache;
     }
 
-    const cachePath = modelsDevCachePath(this.repoRoot);
+    const cachePath = modelsDevCachePath(this.instanceRoot);
     const cached = readModelsDevCache(cachePath);
     if (cached && Date.now() - cached.fetchedAt < MODELS_DEV_CACHE_TTL_MS) {
       this.modelsDevCache = cached.data;
@@ -232,7 +232,8 @@ export class ModelRegistry {
         throw new Error(`models.dev returned ${response.status}`);
       }
       const data = (await response.json()) as ModelsDevRegistry;
-      ensureWatchDir(this.repoRoot);
+      ensureInstanceDir(this.instanceRoot);
+      mkdirSync(stateDir(this.instanceRoot), { recursive: true });
       writeFileSync(cachePath, JSON.stringify({ fetchedAt: Date.now(), data }, null, 2), 'utf8');
       this.modelsDevCache = data;
       return data;
@@ -243,7 +244,7 @@ export class ModelRegistry {
   }
 
   private readActiveModel(): string | undefined {
-    const path = statePath(this.repoRoot);
+    const path = statePath(this.instanceRoot);
     if (!existsSync(path)) {
       return undefined;
     }
@@ -256,8 +257,9 @@ export class ModelRegistry {
   }
 
   private writeActiveModel(activeModel: string): void {
-    ensureWatchDir(this.repoRoot);
-    const path = statePath(this.repoRoot);
+    ensureInstanceDir(this.instanceRoot);
+    mkdirSync(stateDir(this.instanceRoot), { recursive: true });
+    const path = statePath(this.instanceRoot);
     let previous: Record<string, unknown> = {};
     if (existsSync(path)) {
       try {
@@ -352,8 +354,8 @@ function parseOpenRouterAudioSentinel(text: string): { data: string; format: str
   }
 }
 
-function readConfigFile(repoRoot: string): WatchConfigFile {
-  const path = configPath(repoRoot);
+function readConfigFile(instanceRoot: string): WatchConfigFile {
+  const path = configPath(instanceRoot);
   if (!existsSync(path)) {
     return {};
   }
