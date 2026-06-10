@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
-import type { AudioStreamSnapshot, JsonObject, StreamDelta, StreamRegistrySnapshot, TextStreamSnapshot, VideoStreamSnapshot, WebApiStreamConfig } from './types.js';
+import type { AudioStreamSnapshot, JsonObject, StreamDelta, StreamRegistrySnapshot, TextStreamSnapshot, VideoStreamSnapshot, WebApiStreamConfig, SseStreamConfig } from './types.js';
 import {
   BufferedStream,
   ClockStream,
@@ -25,6 +25,7 @@ import {
   type WatchStream,
 } from './stream-primitives.js';
 import { WebApiStream } from './web-api-stream.js';
+import { SseStream } from './sse-stream.js';
 import { InMemoryMessageInbox, type MessageEntry, type MessageInbox, type StoredMessage } from './message-inbox.js';
 
 export type { MessageEntry, MessageInbox, StoredMessage, StreamPopContext, WatchStream };
@@ -42,6 +43,7 @@ export class StreamRegistry {
     private readonly onGazeChanged: (snapshot: StreamRegistrySnapshot) => void = () => {},
     userNotes?: { path: string; maxChars: number },
     inbox: MessageInbox = new InMemoryMessageInbox(),
+    sseStreams: SseStreamConfig[] = [],
   ) {
     this.messages = inbox;
     this.streams.set('clock', new ClockStream());
@@ -61,6 +63,15 @@ export class StreamRegistry {
     for (const config of webApiStreams) {
       if (!config.name.trim() || !config.url.trim()) continue;
       this.streams.set(config.name, new WebApiStream(config.name, config));
+      if (config.subscribed !== false) {
+        this.subscriptions.add(config.name);
+        this.configuredSubscriptions.add(config.name);
+      }
+    }
+
+    for (const config of sseStreams) {
+      if (!config.name.trim() || !config.url.trim()) continue;
+      this.streams.set(config.name, new SseStream(config.name, config));
       if (config.subscribed !== false) {
         this.subscriptions.add(config.name);
         this.configuredSubscriptions.add(config.name);

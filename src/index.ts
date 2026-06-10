@@ -7,7 +7,7 @@ import { configPath, eventLogPath } from './paths.js';
 import { sendControl } from './client.js';
 import { runDaemon } from './server.js';
 import { runOperatorConsole } from './tui.js';
-import type { CameraStreamConfig, WatchConfig, WebApiStreamConfig } from './types.js';
+import type { CameraStreamConfig, WatchConfig, WebApiStreamConfig, SseStreamConfig } from './types.js';
 
 dotenv.config();
 
@@ -18,6 +18,7 @@ type WatchConfigFile = {
   minCffMs?: number;
   maxCffMs?: number;
   webApiStreams?: WebApiStreamConfig[];
+  sseStreams?: SseStreamConfig[];
   cameraStreams?: CameraStreamConfig[];
   scratchpad?: WatchConfig['scratchpad'];
   restAfterNoToolSoundings?: number;
@@ -164,6 +165,7 @@ function defaultConfig(instanceRoot: string, cloneRoot: string, file: WatchConfi
     defaultModel,
     ledgerPath: file.ledgerPath,
     webApiStreams: Array.isArray(file.webApiStreams) ? file.webApiStreams : [],
+    sseStreams: Array.isArray(file.sseStreams) ? file.sseStreams : [],
     cameraStreams: Array.isArray(file.cameraStreams) ? file.cameraStreams : [],
     discord: file.discord,
     desktopCapture: file.desktopCapture ? {

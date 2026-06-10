@@ -50,6 +50,8 @@ export class WatchRuntime {
       !this.scratchpad
         ? undefined
         : { path: this.scratchpad.paths.userPath, maxChars: this.scratchpad.paths.userMaxChars },
+      undefined,
+      config.sseStreams,
     );
     this.log = new EventLog(config.instanceRoot);
     this.cameraStreams = registerCameraStreams(config.cameraStreams, this.streams, this.log);

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, unlinkSync 
 import { createServer, Socket } from 'node:net';
 import { spawn } from 'node:child_process';
 import { daemonLockPath, ensureInstanceDir, socketPath, stateDir } from './paths.js';
-import type { ControlRequest, ControlResponse, WatchConfig } from './types.js';
+import type { ControlRequest, ControlResponse, WatchConfig, SseStreamConfig } from './types.js';
 import { WatchRuntime } from './runtime.js';
 import { EventLog } from './event-log.js';
 

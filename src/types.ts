@@ -9,6 +9,7 @@ export type WatchConfig = {
   defaultModel: string;
   availableModels: string[];
   webApiStreams: WebApiStreamConfig[];
+  sseStreams: SseStreamConfig[];
   cameraStreams: CameraStreamConfig[];
   desktopCapture?: DesktopCaptureConfig;
   ledgerPath?: string;
@@ -27,6 +28,14 @@ export type ScratchpadConfig = {
   userFile?: string;
   agentMaxChars?: number;
   userMaxChars?: number;
+};
+
+export type SseStreamConfig = {
+  name: string;
+  url: string;
+  headers?: Record<string, string>;
+  waking?: boolean;
+  subscribed?: boolean;
 };
 
 export type WebApiStreamConfig = {

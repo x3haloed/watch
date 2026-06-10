@@ -29,6 +29,14 @@
       "kind": "tinyplace_canvas"
     }
   ],
+  "sseStreams": [
+    {
+      "name": "tinygrove:stream",
+      "url": "http://127.0.0.1:37373/stream?waking=true",
+      "subscribed": true,
+      "waking": true
+    }
+  ],
   "cameraStreams": [
     {
       "name": "camera:motion",
