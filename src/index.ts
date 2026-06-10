@@ -296,6 +296,12 @@ function formatLogLine(line: string): string {
         return `${at} terminal killed ${event.sessionId}`;
       case 'subscription_changed':
         return `${at} ${event.subscribed ? 'subscribed' : 'unsubscribed'} ${event.stream}`;
+      case 'sse_stream_connected':
+        return `${at} sse stream connected ${event.stream} -> ${event.url}`;
+      case 'sse_stream_disconnected':
+        return `${at} sse stream disconnected ${event.stream} reason=${event.reason}`;
+      case 'sse_stream_error':
+        return `${at} sse stream error ${event.stream} error=${event.error}`;
       case 'control_message':
         return `${at} control ${event.command}`;
       case 'model_skipped':

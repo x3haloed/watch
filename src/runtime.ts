@@ -42,6 +42,7 @@ export class WatchRuntime {
   constructor(private readonly config: WatchConfig, private readonly requestReboot: (source: 'tool' | 'control') => void = () => {}) {
     this.gazeStore = new GazeStore(config.instanceRoot);
     this.scratchpad = config.scratchpad.enabled === false ? undefined : new Scratchpad(config.instanceRoot, config.scratchpad);
+    this.log = new EventLog(config.instanceRoot);
     this.streams = new StreamRegistry(
       config.webApiStreams,
       config.instanceRoot,
@@ -52,8 +53,8 @@ export class WatchRuntime {
         : { path: this.scratchpad.paths.userPath, maxChars: this.scratchpad.paths.userMaxChars },
       undefined,
       config.sseStreams,
+      this.log,
     );
-    this.log = new EventLog(config.instanceRoot);
     this.cameraStreams = registerCameraStreams(config.cameraStreams, this.streams, this.log);
     if (config.desktopCapture && config.desktopCapture.enabled !== false) {
       this.streams.registerBufferedStream(config.desktopCapture.name || 'desktop:capture', {

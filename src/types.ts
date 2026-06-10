@@ -231,6 +231,9 @@ export type WatchEvent =
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }
   | { type: 'curl'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number }
   | { type: 'reboot_requested'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number; source: 'tool' | 'control' }
+  | { type: 'sse_stream_connected'; at: string; stream: string; url: string }
+  | { type: 'sse_stream_disconnected'; at: string; stream: string; reason: string }
+  | { type: 'sse_stream_error'; at: string; stream: string; error: string }
   | { type: 'model_skipped'; at: string; soundingId: string; reason: string };
 
 export type ControlRequest =

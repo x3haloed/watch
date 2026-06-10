@@ -27,6 +27,7 @@ import {
 import { WebApiStream } from './web-api-stream.js';
 import { SseStream } from './sse-stream.js';
 import { InMemoryMessageInbox, type MessageEntry, type MessageInbox, type StoredMessage } from './message-inbox.js';
+import { EventLog } from './event-log.js';
 
 export type { MessageEntry, MessageInbox, StoredMessage, StreamPopContext, WatchStream };
 
@@ -44,6 +45,7 @@ export class StreamRegistry {
     userNotes?: { path: string; maxChars: number },
     inbox: MessageInbox = new InMemoryMessageInbox(),
     sseStreams: SseStreamConfig[] = [],
+    private readonly log?: EventLog,
   ) {
     this.messages = inbox;
     this.streams.set('clock', new ClockStream());
@@ -70,8 +72,8 @@ export class StreamRegistry {
     }
 
     for (const config of sseStreams) {
-      if (!config.name.trim() || !config.url.trim()) continue;
-      this.streams.set(config.name, new SseStream(config.name, config));
+       if (!config.name.trim() || !config.url.trim()) continue;
+       this.streams.set(config.name, new SseStream(config.name, config, this.log));
       if (config.subscribed !== false) {
         this.subscriptions.add(config.name);
         this.configuredSubscriptions.add(config.name);

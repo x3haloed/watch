@@ -1,5 +1,6 @@
 import type { JsonObject, StreamDelta, SseStreamConfig } from './types.js';
 import { type StreamPopContext, type WatchStream } from './stream-primitives.js';
+import { EventLog } from './event-log.js';
 
 export class SseStream implements WatchStream {
   readonly sampled = false;
@@ -11,6 +12,7 @@ export class SseStream implements WatchStream {
   constructor(
     readonly name: string,
     private readonly config: SseStreamConfig,
+    private readonly log?: EventLog,
   ) {
     this.waking = config.waking !== false;
     this.connect();
@@ -67,6 +69,15 @@ export class SseStream implements WatchStream {
             throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
           }
 
+          if (this.log) {
+            this.log.append({
+              type: 'sse_stream_connected',
+              at: new Date().toISOString(),
+              stream: this.name,
+              url: this.config.url,
+            });
+          }
+
           this.isConnected = true;
           const reader = response.body?.getReader();
           if (!reader) {
@@ -78,7 +89,17 @@ export class SseStream implements WatchStream {
 
           while (!signal.aborted) {
             const { value, done } = await reader.read();
-            if (done) break;
+            if (done) {
+              if (this.log) {
+                this.log.append({
+                  type: 'sse_stream_disconnected',
+                  at: new Date().toISOString(),
+                  stream: this.name,
+                  reason: 'stream closed by server (EOF)',
+                });
+              }
+              break;
+            }
 
             const chunk = decoder.decode(value, { stream: true });
             const lines = (partialLine + chunk).split('\n');
@@ -103,10 +124,19 @@ export class SseStream implements WatchStream {
             break;
           }
           this.isConnected = false;
-          // Log error to console/buffer but keep reconnecting
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          if (this.log) {
+            this.log.append({
+              type: 'sse_stream_error',
+              at: new Date().toISOString(),
+              stream: this.name,
+              error: errorMsg,
+            });
+          }
+          // Log error to buffer but keep reconnecting
           this.push({
             event: 'error',
-            error: error instanceof Error ? error.message : String(error),
+            error: errorMsg,
           });
           // Wait 5 seconds before reconnecting
           await new Promise(resolve => setTimeout(resolve, 5000));
@@ -121,6 +151,14 @@ export class SseStream implements WatchStream {
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;
+    }
+    if (this.isConnected && this.log) {
+      this.log.append({
+        type: 'sse_stream_disconnected',
+        at: new Date().toISOString(),
+        stream: this.name,
+        reason: 'client closed stream connection',
+      });
     }
     this.isConnected = false;
   }
