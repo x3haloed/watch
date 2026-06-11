@@ -13,9 +13,11 @@ import { Scratchpad } from './scratchpad.js';
 import {
   countToolCalls,
   errorToJson,
+  classifyInferenceError,
   isTimeoutLikeError,
   maxOutputTokensForModel,
   messagesForModel,
+  modelFailureTraceMessage,
   repairIncompleteToolTurns,
   repairFlatToolCall,
   requiredApiKeyEnv,
@@ -23,6 +25,7 @@ import {
   timeoutTraceMessage,
   toJsonObject,
 } from './lookout-helpers.js';
+import { InferenceForensics } from './inference-forensics.js';
 import { createLookoutTools } from './lookout-tools.js';
 import { MediaService, type OpenMediaInput } from './media-service.js';
 import { SessionController, type CurlResult, type RebootRequest } from './session-controller.js';
@@ -173,10 +176,12 @@ export class Lookout {
     this.messages.push({ role: 'user', content });
     let toolCallCount = 0;
     const checkpointMessages: ModelMessage[] = [];
+    const forensics = new InferenceForensics(this.cwd, sounding.id);
+    const recordRequest = forensics.recorder();
 
     try {
       const agent = new ToolLoopAgent({
-        model: this.models.createLanguageModel(model),
+        model: this.models.createLanguageModel(model, recordRequest),
         instructions: await this.prompt.instructions(),
         tools: this.createTools(sounding, () => activeTurnModel, nextModel => {
           activeTurnModel = nextModel;
@@ -187,7 +192,7 @@ export class Lookout {
         prepareStep: ({ messages }) => {
           currentStepModel = activeTurnModel;
           return {
-            model: this.models.createLanguageModel(currentStepModel),
+            model: this.models.createLanguageModel(currentStepModel, recordRequest),
             messages: messagesForModel(currentStepModel, messages),
           };
         },
@@ -226,17 +231,24 @@ export class Lookout {
       return { text: result.text, toolCallCount };
     } catch (error) {
       this.session.consumeCurlDuringTurn();
-      if (isTimeoutLikeError(error) || options.abortSignal?.aborted) {
+      const classification = classifyInferenceError(error);
+      const shouldCheckpoint = isTimeoutLikeError(error) || options.abortSignal?.aborted || checkpointMessages.length > 0 || toolCallCount > 0;
+      if (shouldCheckpoint) {
         this.messages.push(...checkpointMessages);
-        this.messages.push(timeoutTraceMessage(sounding, checkpointMessages.length, toolCallCount));
+        this.messages.push(
+          isTimeoutLikeError(error) || options.abortSignal?.aborted
+            ? timeoutTraceMessage(sounding, checkpointMessages.length, toolCallCount)
+            : modelFailureTraceMessage(sounding, checkpointMessages.length, toolCallCount, classification),
+        );
         this.repairMessageHistory();
         this.log.append({
-          type: 'model_timeout_checkpoint',
+          type: isTimeoutLikeError(error) || options.abortSignal?.aborted ? 'model_timeout_checkpoint' : 'model_failure_checkpoint',
           at: new Date().toISOString(),
           soundingId: sounding.id,
           modelId: activeTurnModel.id,
           checkpointMessages: checkpointMessages.length,
           toolCallCount,
+          errorKind: classification.kind,
         });
       } else {
         this.messages.pop();
@@ -247,6 +259,9 @@ export class Lookout {
         soundingId: sounding.id,
         modelId: activeTurnModel.id,
         error: errorToJson(error),
+        classification: toJsonObject(classification),
+        request: forensics.latestJson(),
+        requests: forensics.allJson(),
       });
       throw error;
     }

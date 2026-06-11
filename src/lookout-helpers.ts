@@ -18,6 +18,14 @@ export type ContextFit = {
   recommendation?: string;
 };
 
+export type InferenceErrorClassification = {
+  kind: string;
+  retryable: boolean | null;
+  statusCode?: number;
+  providerErrorCode?: string | number;
+  providerErrorMessage?: string;
+};
+
 export type SoundingMediaPart =
   | { type: 'image'; image: string; mediaType: string }
   | { type: 'file'; data: string; mediaType: string };
@@ -40,6 +48,36 @@ clock: ${sounding.at}
 checkpoint: ${checkpointSummary}
 The original deltas for that Sounding may already have been popped from streams. Treat this as an interrupted attempt, not as absence of event. Continue from the visible checkpoint and current deltas.
 [/timeout_trace]`,
+  };
+}
+
+export function modelFailureTraceMessage(
+  sounding: Sounding,
+  checkpointMessages: number,
+  toolCallCount: number,
+  classification: InferenceErrorClassification,
+): ModelMessage {
+  const checkpointSummary = checkpointMessages > 0
+    ? `${checkpointMessages} response message(s) from completed model/tool steps were checkpointed into this conversation history. tool_call_count: ${toolCallCount}. Do not repeat completed tool calls unless the current situation requires it.`
+    : 'No completed model/tool step was available to checkpoint.';
+  const providerSummary = [
+    `kind: ${classification.kind}`,
+    `retryable: ${classification.retryable ?? 'unknown'}`,
+    classification.statusCode === undefined ? undefined : `status_code: ${classification.statusCode}`,
+    classification.providerErrorCode === undefined ? undefined : `provider_error_code: ${classification.providerErrorCode}`,
+    classification.providerErrorMessage ? `provider_error_message: ${classification.providerErrorMessage}` : undefined,
+  ].filter(Boolean).join('\n');
+  return {
+    role: 'user',
+    content: `[model_failure_trace]
+Previous Sounding failed before a normal assistant completion.
+sounding_id: ${sounding.id}
+trigger: ${sounding.trigger}
+clock: ${sounding.at}
+${providerSummary}
+checkpoint: ${checkpointSummary}
+The original deltas for that Sounding may already have been popped from streams. Treat this as an interrupted attempt, not as absence of event. Continue from the visible checkpoint and current deltas.
+[/model_failure_trace]`,
   };
 }
 
@@ -785,6 +823,56 @@ export function isTimeoutLikeError(error: unknown): boolean {
   return /timeout|timed out|aborted due to timeout/i.test(message);
 }
 
+export function classifyInferenceError(error: unknown): InferenceErrorClassification {
+  const statusCode = numberProperty(error, 'statusCode');
+  const retryable = booleanProperty(error, 'isRetryable');
+  const data = objectProperty(error, 'data');
+  const responseBody = stringProperty(error, 'responseBody');
+  const parsedResponse = parseJsonObject(responseBody);
+  const providerError = objectProperty(data, 'error') ?? objectProperty(parsedResponse, 'error');
+  const providerErrorCode = stringOrNumberProperty(providerError, 'code');
+  const providerErrorMessage = stringProperty(providerError, 'message');
+
+  if (statusCode !== undefined) {
+    if (statusCode >= 400 && statusCode < 500 && statusCode !== 408 && statusCode !== 409 && statusCode !== 429) {
+      return {
+        kind: 'non_retryable_provider_error',
+        retryable: retryable ?? false,
+        statusCode,
+        providerErrorCode,
+        providerErrorMessage,
+      };
+    }
+    if (statusCode === 408 || statusCode === 409 || statusCode === 429 || statusCode >= 500) {
+      return {
+        kind: 'retryable_provider_error',
+        retryable: retryable ?? true,
+        statusCode,
+        providerErrorCode,
+        providerErrorMessage,
+      };
+    }
+    return {
+      kind: 'provider_error',
+      retryable: retryable ?? null,
+      statusCode,
+      providerErrorCode,
+      providerErrorMessage,
+    };
+  }
+
+  if (isTimeoutLikeError(error)) {
+    return { kind: 'timeout', retryable: true };
+  }
+
+  return {
+    kind: retryable === false ? 'non_retryable_inference_error' : 'inference_error',
+    retryable: retryable ?? null,
+    providerErrorCode,
+    providerErrorMessage,
+  };
+}
+
 export function errorToJson(error: unknown): Record<string, unknown> {
   if (error instanceof Error) {
     return {
@@ -792,6 +880,12 @@ export function errorToJson(error: unknown): Record<string, unknown> {
       message: error.message,
       stack: error.stack,
       cause: sanitizeForJson(error.cause),
+      url: stringProperty(error, 'url'),
+      statusCode: numberProperty(error, 'statusCode'),
+      responseHeaders: sanitizeForJson(objectProperty(error, 'responseHeaders')),
+      responseBody: stringProperty(error, 'responseBody'),
+      data: sanitizeForJson(objectProperty(error, 'data')),
+      isRetryable: booleanProperty(error, 'isRetryable'),
     };
   }
   return { value: sanitizeForJson(error) };
@@ -810,6 +904,58 @@ export function countToolCalls(step: unknown): number {
     return 0;
   }
   return content.filter(part => part && typeof part === 'object' && (part as { type?: string }).type === 'tool-call').length;
+}
+
+function stringProperty(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const property = value[key];
+  return typeof property === 'string' ? property : undefined;
+}
+
+function numberProperty(value: unknown, key: string): number | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const property = value[key];
+  return typeof property === 'number' && Number.isFinite(property) ? property : undefined;
+}
+
+function booleanProperty(value: unknown, key: string): boolean | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const property = value[key];
+  return typeof property === 'boolean' ? property : undefined;
+}
+
+function stringOrNumberProperty(value: unknown, key: string): string | number | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const property = value[key];
+  return typeof property === 'string' || typeof property === 'number' ? property : undefined;
+}
+
+function objectProperty(value: unknown, key: string): Record<string, unknown> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const property = value[key];
+  return isRecord(property) ? property : undefined;
+}
+
+function parseJsonObject(value: string | undefined): Record<string, unknown> | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function sanitizeForJson(value: unknown, seen = new WeakSet<object>()): unknown {

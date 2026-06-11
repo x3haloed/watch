@@ -35,6 +35,10 @@ export function eventLogPath(instanceRoot: string): string {
   return join(logsDir(instanceRoot), 'events.jsonl');
 }
 
+export function modelRequestLogDir(instanceRoot: string): string {
+  return join(logsDir(instanceRoot), 'model-requests');
+}
+
 export function statePath(instanceRoot: string): string {
   return join(stateDir(instanceRoot), 'state.json');
 }

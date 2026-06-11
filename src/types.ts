@@ -201,13 +201,14 @@ export type WatchEvent =
   | { type: 'camera_stream_error'; at: string; stream: string; error: JsonObject }
   | { type: 'sounding_started'; at: string; sounding: Sounding }
   | { type: 'sounding_finished'; at: string; soundingId: string; modelId: string; text: string }
-  | { type: 'sounding_failed'; at: string; soundingId: string; modelId: string; error: JsonObject }
+  | { type: 'sounding_failed'; at: string; soundingId: string; modelId: string; error: JsonObject; classification?: JsonObject }
   | { type: 'model_step_finished'; at: string; soundingId: string; modelId: string; step: JsonObject }
   | { type: 'model_finished'; at: string; soundingId: string; modelId: string; result: JsonObject }
-  | { type: 'model_error'; at: string; soundingId: string; modelId: string; error: JsonObject }
+  | { type: 'model_error'; at: string; soundingId: string; modelId: string; error: JsonObject; classification?: JsonObject; request?: JsonObject; requests?: JsonObject[] }
   | { type: 'model_aborted'; at: string; soundingId: string; modelId: string; reason: string }
-  | { type: 'model_failure_backoff'; at: string; modelId: string; failures: number; delayMs: number; until: string; reason: string }
-  | { type: 'model_timeout_checkpoint'; at: string; soundingId: string; modelId: string; checkpointMessages: number; toolCallCount: number }
+  | { type: 'model_failure_backoff'; at: string; modelId: string; failures: number; delayMs: number; until: string; reason: string; classification?: JsonObject }
+  | { type: 'model_timeout_checkpoint'; at: string; soundingId: string; modelId: string; checkpointMessages: number; toolCallCount: number; errorKind?: string }
+  | { type: 'model_failure_checkpoint'; at: string; soundingId: string; modelId: string; checkpointMessages: number; toolCallCount: number; errorKind?: string }
   | { type: 'model_unavailable'; at: string; soundingId: string; modelId: string; reason: string }
   | { type: 'model_reroute'; at: string; soundingId: string; fromModelId: string; toModelId: string; params: JsonObject }
   | { type: 'model_reroute_failed'; at: string; soundingId: string; fromModelId: string; toModelId: string; error: JsonObject }

@@ -9,6 +9,7 @@ import { GazeStore } from './gaze-state.js';
 import { Scratchpad } from './scratchpad.js';
 import { CameraStreamBridge, registerCameraStreams } from './camera-streams.js';
 import { DesktopCaptureBridge } from './stream-primitives.js';
+import { classifyInferenceError, type InferenceErrorClassification } from './lookout-helpers.js';
 
 const MODEL_FAILURE_BACKOFF_BASE_MS = 30_000;
 const MODEL_FAILURE_BACKOFF_MAX_MS = 5 * 60_000;
@@ -349,6 +350,7 @@ export class WatchRuntime {
             this.initiateReboot(reboot.source);
           }
         } catch (error) {
+          const classification = classifyInferenceError(error);
           if (isAbortError(error) || this.activeAbortController?.signal.aborted) {
             this.log.append({
               type: 'model_aborted',
@@ -364,16 +366,21 @@ export class WatchRuntime {
             soundingId: sounding.id,
             modelId: this.lookout.modelId,
             error: errorToJson(error),
+            classification: classificationToJson(classification),
           });
           this.pushErrorStream({
             severity: isAbortError(error) ? 'warning' : 'error',
             source: 'inference',
-            kind: isAbortError(error) ? 'model_aborted' : 'model_error',
+            kind: isAbortError(error) ? 'model_aborted' : classification.kind,
             modelId: this.lookout.modelId,
             soundingId: sounding.id,
             message: errorMessage(error),
+            retryable: classification.retryable,
+            statusCode: classification.statusCode,
+            providerErrorCode: classification.providerErrorCode,
+            providerErrorMessage: classification.providerErrorMessage,
           });
-          this.beginModelFailureBackoff(this.lookout.modelId, errorMessage(error), sounding.id);
+          this.beginModelFailureBackoff(this.lookout.modelId, errorMessage(error), sounding.id, classification);
         } finally {
           this.activeAbortController = undefined;
           this.desktopCaptureBridge?.startSegment();
@@ -389,12 +396,14 @@ export class WatchRuntime {
     }
   }
 
-  private beginModelFailureBackoff(modelId: string, reason: string, soundingId?: string): void {
+  private beginModelFailureBackoff(modelId: string, reason: string, soundingId?: string, classification?: InferenceErrorClassification): void {
     this.modelFailureCount += 1;
-    const delayMs = Math.min(
-      MODEL_FAILURE_BACKOFF_MAX_MS,
-      MODEL_FAILURE_BACKOFF_BASE_MS * 2 ** Math.max(0, this.modelFailureCount - 1),
-    );
+    const delayMs = classification?.retryable === false
+      ? MODEL_FAILURE_BACKOFF_MAX_MS
+      : Math.min(
+          MODEL_FAILURE_BACKOFF_MAX_MS,
+          MODEL_FAILURE_BACKOFF_BASE_MS * 2 ** Math.max(0, this.modelFailureCount - 1),
+        );
     this.modelBackoffUntil = Date.now() + delayMs;
     this.soundQueued = false;
     this.queuedTrigger = 'delta';
@@ -406,16 +415,21 @@ export class WatchRuntime {
       delayMs,
       until: new Date(this.modelBackoffUntil).toISOString(),
       reason,
+      classification: classification ? classificationToJson(classification) : undefined,
     });
     this.pushErrorStream({
       severity: 'warning',
       source: 'runtime',
-      kind: 'model_failure_backoff',
+      kind: classification?.retryable === false ? 'non_retryable_model_failure_backoff' : 'model_failure_backoff',
       modelId,
       soundingId,
       message: reason,
       delayMs,
       until: new Date(this.modelBackoffUntil).toISOString(),
+      retryable: classification?.retryable,
+      statusCode: classification?.statusCode,
+      providerErrorCode: classification?.providerErrorCode,
+      providerErrorMessage: classification?.providerErrorMessage,
     });
   }
 
@@ -517,6 +531,9 @@ export class WatchRuntime {
           severity: payload.severity,
           modelId: payload.modelId,
           message: payload.message,
+          retryable: payload.retryable,
+          statusCode: payload.statusCode,
+          providerErrorCode: payload.providerErrorCode,
         },
       });
     }
@@ -559,11 +576,25 @@ function errorMessage(error: unknown): string {
 
 function errorToJson(error: unknown): Record<string, unknown> {
   if (error instanceof Error) {
+    const record = error as Error & Record<string, unknown>;
     return {
       name: error.name,
       message: error.message,
       stack: error.stack,
+      statusCode: typeof record.statusCode === 'number' ? record.statusCode : undefined,
+      responseBody: typeof record.responseBody === 'string' ? record.responseBody : undefined,
+      isRetryable: typeof record.isRetryable === 'boolean' ? record.isRetryable : undefined,
     };
   }
   return { value: String(error) };
+}
+
+function classificationToJson(classification: InferenceErrorClassification): Record<string, unknown> {
+  return {
+    kind: classification.kind,
+    retryable: classification.retryable,
+    statusCode: classification.statusCode,
+    providerErrorCode: classification.providerErrorCode,
+    providerErrorMessage: classification.providerErrorMessage,
+  };
 }

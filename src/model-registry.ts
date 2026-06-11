@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';
+import type { ModelRequestRecorder } from './inference-forensics.js';
 import { configPath, ensureInstanceDir, modelsDevCachePath, stateDir, statePath } from './paths.js';
 import type { ModelCapabilities, ModelConfig, ModelProvider, ResolvedModel } from './types.js';
 
@@ -143,13 +144,13 @@ export class ModelRegistry {
     return model;
   }
 
-  createLanguageModel(model: ResolvedModel): LanguageModel {
+  createLanguageModel(model: ResolvedModel, recordRequest?: ModelRequestRecorder): LanguageModel {
     if (model.provider === 'openrouter') {
       return createOpenAICompatible({
         name: 'openrouter',
         baseURL: model.baseURL ?? 'https://openrouter.ai/api/v1',
         apiKey: readApiKey(model.apiKeyEnv ?? 'OPENROUTER_API_KEY'),
-        transformRequestBody: transformOpenRouterRequestBody,
+        transformRequestBody: args => recordTransformedRequest(transformOpenRouterRequestBody(args), model, 'openrouter', recordRequest),
       })(model.model) as LanguageModel;
     }
 
@@ -157,6 +158,7 @@ export class ModelRegistry {
       name: model.id,
       baseURL: model.baseURL ?? 'http://localhost:1234/v1',
       apiKey: readApiKey(model.apiKeyEnv) || 'no-key-required',
+      transformRequestBody: args => recordTransformedRequest(args, model, model.provider, recordRequest),
     })(model.model) as LanguageModel;
   }
 
@@ -291,6 +293,20 @@ function transformOpenRouterRequestBody(args: Record<string, any>): Record<strin
       ? args.messages.map(transformOpenRouterMessage)
       : args.messages,
   };
+}
+
+function recordTransformedRequest(
+  body: Record<string, any>,
+  model: ResolvedModel,
+  provider: string,
+  recordRequest?: ModelRequestRecorder,
+): Record<string, any> {
+  recordRequest?.(body, {
+    provider,
+    modelId: model.id,
+    providerModel: model.model,
+  });
+  return body;
 }
 
 function transformOpenRouterMessage(message: unknown): unknown {
