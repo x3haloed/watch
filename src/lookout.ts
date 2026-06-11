@@ -305,7 +305,7 @@ export class Lookout {
       modelSwitched: true,
       fromModel: fromModel.id,
       toModel: request.modelId,
-      message: `Welcome to ${request.modelId}. Continue this same Sounding from the current conversation state; do not replay the original deltas.`,
+      message: `Welcome to ${request.modelId}. Continue this same Sounding from the current conversation state.`,
     };
   }
 
