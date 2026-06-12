@@ -132,6 +132,42 @@ test('attaches nested audio and video media from AV Sounding deltas', () => {
   assert.doesNotMatch(result.text, /image123/);
 });
 
+test('attaches nested audio and video bytes from AV Sounding deltas for video-capable models', () => {
+  const builder = promptBuilder([]);
+  const avModel: ResolvedModel = {
+    ...model,
+    capabilities: {
+      ...model.capabilities,
+      audio: true,
+      video: true,
+    },
+  };
+  const mediaSounding: Sounding = {
+    ...sounding,
+    model: avModel,
+    deltas: [
+      {
+        stream: 'av:clip.mp4:test',
+        at: sounding.at,
+        payload: {
+          kind: 'av_file_chunk',
+          audio: { dataBase64: 'audio123', mediaType: 'audio/wav', startOffset: 0, endOffset: 1 },
+          video: { dataBase64: 'video123', mediaType: 'video/mp4', startOffset: 0, endOffset: 1 },
+        },
+      },
+    ],
+  };
+  const result = builder.formatSounding({ sounding: mediaSounding, model: avModel });
+
+  assert.deepEqual(result.mediaParts, [
+    { type: 'file', data: 'audio123', mediaType: 'audio/wav' },
+    { type: 'file', data: 'video123', mediaType: 'video/mp4' },
+  ]);
+  assert.match(result.text, /mediaPartsAttached":2/);
+  assert.doesNotMatch(result.text, /audio123/);
+  assert.doesNotMatch(result.text, /video123/);
+});
+
 test('moves nested AV stream-open tool media into a synthetic user message', () => {
   const output = mediaToolOutputToModelOutput({
     ok: true,
@@ -174,6 +210,47 @@ test('moves nested AV stream-open tool media into a synthetic user message', () 
   assert.deepEqual(userMessage.content.slice(1), [
     { type: 'file', data: 'audio123', mediaType: 'audio/wav' },
     { type: 'image', image: 'image123', mediaType: 'image/jpeg' },
+  ]);
+});
+
+test('moves nested AV stream-open video bytes into a synthetic user message', () => {
+  const output = mediaToolOutputToModelOutput({
+    ok: true,
+    message: 'audio/video stream opened',
+    firstChunk: {
+      kind: 'av_file_chunk',
+      audio: { dataBase64: 'audio123', mediaType: 'audio/wav', startOffset: 0, endOffset: 1 },
+      video: { dataBase64: 'video123', mediaType: 'video/mp4', startOffset: 0, endOffset: 1 },
+    },
+  });
+  assert.equal(output.type, 'content');
+
+  const avModel: ResolvedModel = {
+    ...model,
+    capabilities: {
+      ...model.capabilities,
+      audio: true,
+      video: true,
+    },
+  };
+  const messages = messagesForModel(avModel, [
+    {
+      role: 'tool',
+      content: [{
+        type: 'tool-result',
+        toolCallId: 'call-1',
+        toolName: 'av_stream_open',
+        output,
+      }],
+    } as ModelMessage,
+  ]);
+
+  const userMessage = messages[2] as { role: string; content: unknown[] };
+
+  assert.equal(userMessage.role, 'user');
+  assert.deepEqual(userMessage.content.slice(1), [
+    { type: 'file', data: 'audio123', mediaType: 'audio/wav' },
+    { type: 'file', data: 'video123', mediaType: 'video/mp4' },
   ]);
 });
 

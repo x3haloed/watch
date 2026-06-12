@@ -594,6 +594,53 @@ export function extractVideoFrame(
   });
 }
 
+export function extractVideoSlice(
+  filePath: string,
+  startSecond: number,
+  durationSeconds: number,
+  width?: number,
+  height?: number,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (durationSeconds <= 0) {
+      resolve(null);
+      return;
+    }
+
+    const scaleFilter = (width && height) ? `scale=${width}:${height}:force_original_aspect_ratio=decrease` : undefined;
+    const args = [
+      '-ss', startSecond.toFixed(3),
+      '-t', durationSeconds.toFixed(3),
+      '-i', filePath,
+      ...(scaleFilter ? ['-vf', scaleFilter] : []),
+      '-an',
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-movflags', 'frag_keyframe+empty_moov',
+      '-f', 'mp4',
+      'pipe:1',
+    ];
+    const proc = spawn('ffmpeg', args);
+
+    const chunks: Buffer[] = [];
+    proc.stdout.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0 && chunks.length > 0) {
+        resolve(Buffer.concat(chunks).toString('base64'));
+      } else {
+        resolve(null);
+      }
+    });
+
+    proc.on('error', () => {
+      resolve(null);
+    });
+  });
+}
+
 function audioMimeType(format: string): string {
   if (format === 'mp3') {
     return 'audio/mp3';
@@ -695,6 +742,52 @@ async function readVideoFrames(input: {
     }
   }
   return frames;
+}
+
+async function readVideoChunk(input: {
+  file: string;
+  stream: string;
+  startOffset: number;
+  endOffset: number;
+  deltaSeconds: number;
+  fps: number;
+  width?: number;
+  height?: number;
+  preferVideo: boolean;
+}): Promise<JsonObject | undefined> {
+  if (input.preferVideo) {
+    const dataBase64 = await extractVideoSlice(input.file, input.startOffset, input.endOffset - input.startOffset, input.width, input.height);
+    if (dataBase64) {
+      return {
+        kind: 'video_file_chunk',
+        stream: input.stream,
+        startOffset: input.startOffset,
+        endOffset: input.endOffset,
+        dataBase64,
+        mediaType: 'video/mp4',
+      };
+    }
+  }
+
+  const frames = await readVideoFrames({
+    file: input.file,
+    startOffset: input.startOffset,
+    endOffset: input.endOffset,
+    deltaSeconds: input.deltaSeconds,
+    fps: input.fps,
+    width: input.width,
+    height: input.height,
+  });
+  if (frames.length === 0) {
+    return undefined;
+  }
+
+  return {
+    kind: 'video_frame_chunk',
+    stream: input.stream,
+    count: frames.length,
+    items: frames,
+  };
 }
 
 export function isVideoStreamSnapshot(value: unknown): value is VideoStreamSnapshot {
@@ -860,6 +953,7 @@ export class VideoFileStream implements WatchStream {
     private readonly duration: number,
     private readonly width?: number,
     private readonly height?: number,
+    private readonly initialPreferVideo = false,
   ) {
     this.videoTime = startSecond;
   }
@@ -874,6 +968,21 @@ export class VideoFileStream implements WatchStream {
 
   async readInitialChunk(): Promise<JsonObject | undefined> {
     this.lastPopTime = new Date();
+    if (this.initialPreferVideo) {
+      const endOffset = Math.min(this.duration, this.videoTime + 1);
+      return readVideoChunk({
+        file: this.file,
+        stream: this.name,
+        startOffset: this.videoTime,
+        endOffset,
+        deltaSeconds: endOffset - this.videoTime,
+        fps: this.fps,
+        width: this.width,
+        height: this.height,
+        preferVideo: true,
+      });
+    }
+
     const base64 = await extractVideoFrame(this.file, this.videoTime, this.width, this.height);
     if (!base64) {
       return undefined;
@@ -895,16 +1004,18 @@ export class VideoFileStream implements WatchStream {
     const { startOffset, endOffset, deltaSeconds } = nextMediaWindow(this.videoTime, this.duration, this.speed, elapsedSeconds);
     this.videoTime = endOffset;
 
-    const frames = await readVideoFrames({
+    const video = await readVideoChunk({
       file: this.file,
+      stream: this.name,
       startOffset,
       endOffset,
       deltaSeconds,
       fps: this.fps,
       width: this.width,
       height: this.height,
+      preferVideo: context.capabilities.video,
     });
-    if (frames.length === 0) {
+    if (!video) {
       return undefined;
     }
 
@@ -921,12 +1032,11 @@ export class VideoFileStream implements WatchStream {
         endOffset,
         videoTime: this.videoTime,
         duration: this.duration,
-        count: frames.length,
         done,
-        items: frames,
+        ...video,
         hint: done
           ? 'Video stream reached end and will be removed from gaze.'
-          : `Next Sounding will include video frames. Call video_stream_close or unsubscribe_stream to stop.`,
+          : `Next Sounding will include video chunks. Call video_stream_close or unsubscribe_stream to stop.`,
       },
     };
   }
@@ -967,6 +1077,7 @@ export class AudioVideoFileStream implements WatchStream {
     private readonly format: string,
     private readonly width?: number,
     private readonly height?: number,
+    private readonly initialPreferVideo = false,
   ) {
     this.mediaTime = startSecond;
   }
@@ -982,7 +1093,7 @@ export class AudioVideoFileStream implements WatchStream {
   async readInitialChunk(): Promise<JsonObject | undefined> {
     this.lastPopTime = new Date();
     const initialDuration = Math.min(1, this.duration - this.mediaTime);
-    const [audio, frame] = await Promise.all([
+    const [audio, videoPayload] = await Promise.all([
       readAudioChunk({
         file: this.file,
         stream: this.name,
@@ -992,18 +1103,32 @@ export class AudioVideoFileStream implements WatchStream {
         channels: this.channels,
         format: this.format,
       }),
-      extractVideoFrame(this.file, this.mediaTime, this.width, this.height),
+      this.initialPreferVideo
+        ? readVideoChunk({
+            file: this.file,
+            stream: this.name,
+            startOffset: this.mediaTime,
+            endOffset: this.mediaTime + initialDuration,
+            deltaSeconds: initialDuration,
+            fps: this.fps,
+            width: this.width,
+            height: this.height,
+            preferVideo: true,
+          })
+        : extractVideoFrame(this.file, this.mediaTime, this.width, this.height),
     ]);
 
-    const video = frame
-      ? {
-          kind: 'video_frame',
-          stream: this.name,
-          timestamp: this.mediaTime,
-          dataBase64: frame,
-          mediaType: 'image/jpeg',
-        }
-      : undefined;
+    const video = this.initialPreferVideo
+      ? videoPayload
+      : typeof videoPayload === 'string'
+        ? {
+            kind: 'video_frame',
+            stream: this.name,
+            timestamp: this.mediaTime,
+            dataBase64: videoPayload,
+            mediaType: 'image/jpeg',
+          }
+        : undefined;
 
     if (!audio && !video) {
       return undefined;
@@ -1027,7 +1152,7 @@ export class AudioVideoFileStream implements WatchStream {
     const { startOffset, endOffset, deltaSeconds } = nextMediaWindow(this.mediaTime, this.duration, this.speed, elapsedSeconds);
     this.mediaTime = endOffset;
 
-    const [audio, frames] = await Promise.all([
+    const [audio, video] = await Promise.all([
       readAudioChunk({
         file: this.file,
         stream: this.name,
@@ -1037,18 +1162,20 @@ export class AudioVideoFileStream implements WatchStream {
         channels: this.channels,
         format: this.format,
       }),
-      readVideoFrames({
+      readVideoChunk({
         file: this.file,
+        stream: this.name,
         startOffset,
         endOffset,
         deltaSeconds,
         fps: this.fps,
         width: this.width,
         height: this.height,
+        preferVideo: context.capabilities.video,
       }),
     ]);
 
-    if (!audio && frames.length === 0) {
+    if (!audio && !video) {
       return undefined;
     }
 
@@ -1067,17 +1194,10 @@ export class AudioVideoFileStream implements WatchStream {
         duration: this.duration,
         done,
         audio,
-        video: frames.length > 0
-          ? {
-              kind: 'video_file_chunk',
-              stream: this.name,
-              count: frames.length,
-              items: frames,
-            }
-          : undefined,
+        video,
         hint: done
           ? 'Audio/video stream reached end and will be removed from gaze.'
-          : `Next Sounding will include audio chunk and video frames. Call av_stream_close or unsubscribe_stream to stop.`,
+          : `Next Sounding will include audio chunk and video chunks. Call av_stream_close or unsubscribe_stream to stop.`,
       }),
     };
   }

@@ -188,6 +188,7 @@ export class StreamRegistry {
     resumeAtSecond?: number;
     width?: number;
     height?: number;
+    preferVideo?: boolean;
   }): Promise<Record<string, unknown>> {
     const file = this.resolvePath(input.path);
     const fps = input.fps ?? 1;
@@ -205,6 +206,7 @@ export class StreamRegistry {
       duration,
       input.width,
       input.height,
+      input.preferVideo ?? false,
     );
 
     const firstChunk = await stream.readInitialChunk();
@@ -228,7 +230,7 @@ export class StreamRegistry {
       firstChunk,
       next_actions: stream.isDone()
         ? ['Video stream reached duration end in the first chunk. Call video_stream_open with resumeAtSecond to read from another position.']
-        : [`Future Soundings will include the next video frames. Call video_stream_close or unsubscribe_stream to stop.`],
+        : [`Future Soundings will include the next video chunks. Call video_stream_close or unsubscribe_stream to stop.`],
     };
   }
 
@@ -333,6 +335,7 @@ export class StreamRegistry {
     resumeAtSecond?: number;
     width?: number;
     height?: number;
+    preferVideo?: boolean;
   }): Promise<Record<string, unknown>> {
     const file = this.resolvePath(input.path);
     const fps = input.fps ?? 1;
@@ -356,6 +359,7 @@ export class StreamRegistry {
       format,
       input.width,
       input.height,
+      input.preferVideo ?? false,
     );
 
     const firstChunk = await stream.readInitialChunk();
@@ -382,7 +386,7 @@ export class StreamRegistry {
       firstChunk,
       next_actions: stream.isDone()
         ? ['Audio/video stream reached duration end in the first chunk. Call av_stream_open with resumeAtSecond to read from another position.']
-        : [`Future Soundings will include the next audio chunks and video frames. Call av_stream_close or unsubscribe_stream to stop.`],
+        : [`Future Soundings will include the next audio chunks and video chunks. Call av_stream_close or unsubscribe_stream to stop.`],
     };
   }
 

@@ -293,6 +293,9 @@ export function promptMediaSupportForModel(model: ResolvedModel, mediaType: stri
       return { ok: true };
     }
   }
+  if (normalized.startsWith('video/') && model.capabilities.video) {
+    return { ok: true };
+  }
   if (normalized.startsWith('image/')) {
     return { ok: true };
   }

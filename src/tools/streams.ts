@@ -94,7 +94,7 @@ export function createStreamTools(ctx: LookoutToolContext) {
     }),
     video_stream_open: tool({
       description:
-        'Begin reading a video file as a gaze stream. Extracts image frames on-the-fly based on elapsed time between Soundings. Returns the initial frame immediately, then future Soundings include subsequent frames until video end or video_stream_close/unsubscribe_stream.',
+        'Begin reading a video file as a gaze stream. Streams video chunks when the active model supports video input, otherwise extracts image frames on-the-fly based on elapsed time between Soundings. Returns the initial chunk immediately, then future Soundings include subsequent chunks until video end or video_stream_close/unsubscribe_stream.',
       inputSchema: jsonSchema<{ path: string; fps?: number; speed?: number; resumeAtSecond?: number; width?: number; height?: number }>({
         type: 'object',
         properties: {
@@ -109,7 +109,7 @@ export function createStreamTools(ctx: LookoutToolContext) {
         additionalProperties: false,
       }),
       execute: async ({ path, fps, speed, resumeAtSecond, width, height }) => {
-        const result = await ctx.streams.openVideoFileStream({ path, fps, speed, resumeAtSecond, width, height });
+        const result = await ctx.streams.openVideoFileStream({ path, fps, speed, resumeAtSecond, width, height, preferVideo: ctx.currentModel().capabilities.video });
         ctx.log.append({
           type: 'subscription_changed',
           at: new Date().toISOString(),
@@ -192,7 +192,7 @@ export function createStreamTools(ctx: LookoutToolContext) {
     }),
     av_stream_open: tool({
       description:
-        'Begin reading one media file containing audio and video as a single gaze stream. Extracts audio chunks and image frames on-the-fly from one shared media timeline based on elapsed time between Soundings. Returns the initial audio/video chunk immediately, then future Soundings include subsequent chunks until media end or av_stream_close/unsubscribe_stream.',
+        'Begin reading one media file containing audio and video as a single gaze stream. Extracts audio chunks and streams video chunks when the active model supports video input, otherwise samples image frames, from one shared media timeline based on elapsed time between Soundings. Returns the initial audio/video chunk immediately, then future Soundings include subsequent chunks until media end or av_stream_close/unsubscribe_stream.',
       inputSchema: jsonSchema<{ path: string; fps?: number; speed?: number; sampleRate?: number; channels?: number; format?: string; resumeAtSecond?: number; width?: number; height?: number }>({
         type: 'object',
         properties: {
@@ -210,7 +210,7 @@ export function createStreamTools(ctx: LookoutToolContext) {
         additionalProperties: false,
       }),
       execute: async ({ path, fps, speed, sampleRate, channels, format, resumeAtSecond, width, height }) => {
-        const result = await ctx.streams.openAudioVideoFileStream({ path, fps, speed, sampleRate, channels, format, resumeAtSecond, width, height });
+        const result = await ctx.streams.openAudioVideoFileStream({ path, fps, speed, sampleRate, channels, format, resumeAtSecond, width, height, preferVideo: ctx.currentModel().capabilities.video });
         ctx.log.append({
           type: 'subscription_changed',
           at: new Date().toISOString(),
@@ -274,7 +274,7 @@ function formatVideoOpenResult(result: Record<string, unknown>): Record<string, 
   const filename = String(result.filename ?? result.file ?? 'video');
   return {
     ...result,
-    message: `video stream for file ${filename} opened successfully. total duration: ${result.duration}s. Fps: ${result.fps}, speed: ${result.speed}x. Initial frame extracted:`,
+    message: `video stream for file ${filename} opened successfully. total duration: ${result.duration}s. Fps: ${result.fps}, speed: ${result.speed}x. Initial video chunk extracted:`,
   };
 }
 
