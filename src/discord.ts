@@ -47,6 +47,7 @@ export type DiscordContextReadInput = {
 
 export type DiscordSendInput = {
   replyToId?: number;
+  channelId?: string;
   message: string;
   attachments?: string[];
 };
@@ -254,22 +255,18 @@ export class DiscordBridge {
     if (!this.client.isReady()) {
       return { ok: false, error: 'Discord bridge is not connected.' };
     }
-    if (input.replyToId === undefined) {
-      return { ok: false, error: 'Discord send_message requires replyToId from a Discord inbox message.' };
+
+    const target = this.resolveSendTarget(input);
+    if (!target.ok) {
+      return target;
     }
 
-    const stored = this.streams.getMessage(input.replyToId);
-    const discord = readDiscordMetadata(stored?.metadata);
-    if (!discord) {
-      return { ok: false, error: `Inbox message ${input.replyToId} is not a Discord message.` };
-    }
-
-    const channel = await this.fetchTextChannel(discord.channelId);
+    const channel = await this.fetchTextChannel(target.channelId);
     if (!channel) {
-      return { ok: false, error: `Discord channel not found or not text-readable: ${discord.channelId}` };
+      return { ok: false, error: `Discord channel not found or not text-readable: ${target.channelId}` };
     }
     if (!isSendableChannel(channel)) {
-      return { ok: false, error: `Discord channel is not sendable: ${discord.channelId}` };
+      return { ok: false, error: `Discord channel is not sendable: ${target.channelId}` };
     }
 
     if (input.attachments && input.attachments.length > 0) {
@@ -287,7 +284,7 @@ export class DiscordBridge {
       const payload = {
         content: chunk,
         allowedMentions: { repliedUser: index === 0, parse: [] },
-        reply: index === 0 ? { messageReference: discord.messageId, failIfNotExists: false } : undefined,
+        reply: index === 0 && target.messageId ? { messageReference: target.messageId, failIfNotExists: false } : undefined,
         files: (index === 0 && input.attachments && input.attachments.length > 0) ? input.attachments : undefined,
       };
       const result = await channel.send(payload).catch((error: unknown) => error);
@@ -302,7 +299,34 @@ export class DiscordBridge {
       });
     }
 
-    return { ok: true, delivered: 'discord', replyToId: input.replyToId, messages: sent };
+    return { ok: true, delivered: 'discord', replyToId: input.replyToId, channelId: target.channelId, messages: sent };
+  }
+
+  private resolveSendTarget(input: DiscordSendInput): { ok: true; channelId: string; messageId?: string } | { ok: false; error: string } {
+    if (input.replyToId !== undefined) {
+      const stored = this.streams.getMessage(input.replyToId);
+      const discord = readDiscordMetadata(stored?.metadata);
+      if (!discord) {
+        return { ok: false, error: `Inbox message ${input.replyToId} is not a Discord message.` };
+      }
+
+      const requestedChannelId = input.channelId?.trim();
+      if (requestedChannelId && requestedChannelId !== discord.channelId) {
+        return {
+          ok: false,
+          error: `channelId ${requestedChannelId} does not match the Discord inbox message channel ${discord.channelId}.`,
+        };
+      }
+
+      return { ok: true, channelId: discord.channelId, messageId: discord.messageId };
+    }
+
+    const channelId = input.channelId?.trim();
+    if (!channelId) {
+      return { ok: false, error: 'Discord send_message requires replyToId from a Discord inbox message or channelId for proactive posting.' };
+    }
+
+    return { ok: true, channelId };
   }
 
   private async handleMessage(message: Message): Promise<void> {

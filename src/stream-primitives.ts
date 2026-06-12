@@ -95,7 +95,7 @@ export class InboxStream implements WatchStream {
               subject: message.subject,
               receivedAt: message.receivedAt,
               preview: inboxDeltaPreview(message),
-              hint: `Call open_message with id ${message.id} to read the full message. To reply after reading, call send_message with medium "${message.medium}" and replyToId ${message.id}.`,
+              hint: `Call open_message with id ${message.id} to read the full message. To reply after reading, call send_message with medium "${message.medium}" and replyToId ${message.id}. For proactive Discord posting, use send_message with medium "discord" and a channelId.`,
             }),
           ]
         : [];

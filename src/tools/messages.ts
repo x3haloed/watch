@@ -48,6 +48,9 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
           },
           next_actions: [
             `To reply to this message, call send_message with medium "${message.medium}", replyToId ${message.id}, and your message content.`,
+            ...(message.medium === 'discord' && discordChannelId(message.metadata)
+              ? [`To post proactively into the same Discord channel, call send_message with medium "discord", channelId "${discordChannelId(message.metadata)}", and your message content.`]
+              : []),
             ...attachments.map(attachment => `To inspect attachment ${attachment.id} (${attachment.mediaType}), call open_media with inboxMessageId ${message.id} and attachmentId "${attachment.id}".`),
             'If no reply is needed, continue monitoring.',
           ],
@@ -81,12 +84,13 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
     send_message: tool({
       description:
         'Send a user-facing message to an external medium. Use this for communication; final assistant text is private working speech and is not routed to the user.',
-      inputSchema: jsonSchema<{ medium: string; message: string; replyToId?: number; attachments?: string[] }>({
+      inputSchema: jsonSchema<{ medium: string; message: string; replyToId?: number; channelId?: string; attachments?: string[] }>({
         type: 'object',
         properties: {
           medium: { type: 'string', description: 'Destination medium, for example "cli".' },
           message: { type: 'string', description: 'Message to send.' },
           replyToId: { type: 'number', description: 'Optional global message ID being replied to.' },
+          channelId: { type: 'string', description: 'Discord channel or thread ID for proactive posting when no replyToId is available.' },
           attachments: {
             type: 'array',
             items: { type: 'string' },
@@ -96,7 +100,7 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
         required: ['medium', 'message'],
         additionalProperties: false,
       }),
-      execute: async ({ medium, message, replyToId, attachments }) => {
+      execute: async ({ medium, message, replyToId, channelId, attachments }) => {
         const resolvedAttachments = attachments && attachments.length > 0
           ? attachments.map(filePath => {
               const cleanPath = filePath.trim();
@@ -124,7 +128,7 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
         }
         if (medium === 'discord') {
           if (!ctx.discord) return { ok: false, error: 'Discord bridge is not configured.' };
-          const result = await ctx.discord.sendMessage({ replyToId, message, attachments: resolvedAttachments });
+          const result = await ctx.discord.sendMessage({ replyToId, channelId, message, attachments: resolvedAttachments });
           if (result.ok === true) {
             const messageIds = Array.isArray(result.messages)
               ? result.messages
@@ -136,6 +140,7 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
               at: new Date().toISOString(),
               soundingId: sounding.id,
               replyToId,
+              channelId,
               messageIds,
             });
           }
@@ -143,6 +148,14 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
         }
         return { ok: false, error: `Unsupported medium: ${medium}`, supportedMedia: ['cli', 'discord'] };
       },
-    }),
+  }),
   };
+}
+
+function discordChannelId(metadata: unknown): string | undefined {
+  if (!metadata || typeof metadata !== 'object') return undefined;
+  const discord = (metadata as { discord?: unknown }).discord;
+  if (!discord || typeof discord !== 'object') return undefined;
+  const channelId = (discord as { channelId?: unknown }).channelId;
+  return typeof channelId === 'string' && channelId.trim() ? channelId.trim() : undefined;
 }

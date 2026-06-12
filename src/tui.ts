@@ -171,6 +171,10 @@ function renderMessages(events: EventRecord[]): string {
       const reply = event.replyToId ? ` -> #${event.replyToId}` : '';
       rows.push(`${time(event.at)} agent${reply}: ${event.message}`);
     }
+    if (event.type === 'discord_outbound') {
+      const target = event.replyToId ? `reply #${event.replyToId}` : event.channelId ? `channel ${event.channelId}` : 'discord';
+      rows.push(`${time(event.at)} discord ${target}: ${event.messageIds.join(', ')}`);
+    }
     if (event.type === 'sounding_finished' && event.text) {
       rows.push(`${time(event.at)} private: ${shortText(event.text, 500)}`);
     }
