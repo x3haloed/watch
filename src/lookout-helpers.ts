@@ -159,14 +159,24 @@ function prepareSoundingPayload(payload: unknown, model: ResolvedModel, mediaPar
     return prepareSoundingMediaRecord(payload, media, model, mediaParts);
   }
 
-  if (Array.isArray(payload.items)) {
+  const mediaPartsBefore = mediaParts.length;
+  const prepared = Object.fromEntries(
+    Object.entries(payload).map(([key, value]) => [
+      key,
+      Array.isArray(value)
+        ? value.map(item => prepareSoundingPayload(item, model, mediaParts))
+        : prepareSoundingPayload(value, model, mediaParts),
+    ]),
+  );
+
+  if (payload.kind === 'av_file_chunk') {
     return {
-      ...payload,
-      items: payload.items.map(item => prepareSoundingPayload(item, model, mediaParts)),
+      ...prepared,
+      mediaPartsAttached: mediaParts.length - mediaPartsBefore,
     };
   }
 
-  return payload;
+  return prepared;
 }
 
 function prepareSoundingMediaRecord(

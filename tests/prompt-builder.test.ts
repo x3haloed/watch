@@ -91,6 +91,46 @@ test('attaches supported image media from Sounding deltas', () => {
   assert.doesNotMatch(result.text, /abc123/);
 });
 
+test('attaches nested audio and video media from AV Sounding deltas', () => {
+  const builder = promptBuilder([]);
+  const avModel: ResolvedModel = {
+    ...model,
+    capabilities: {
+      ...model.capabilities,
+      audio: true,
+      images: true,
+    },
+  };
+  const mediaSounding: Sounding = {
+    ...sounding,
+    model: avModel,
+    deltas: [
+      {
+        stream: 'av:clip.mp4:test',
+        at: sounding.at,
+        payload: {
+          kind: 'av_file_chunk',
+          audio: { dataBase64: 'audio123', mediaType: 'audio/wav', startOffset: 0, endOffset: 1 },
+          video: {
+            kind: 'video_file_chunk',
+            count: 1,
+            items: [{ dataBase64: 'image123', mediaType: 'image/jpeg', timestamp: 1 }],
+          },
+        },
+      },
+    ],
+  };
+  const result = builder.formatSounding({ sounding: mediaSounding, model: avModel });
+
+  assert.deepEqual(result.mediaParts, [
+    { type: 'file', data: 'audio123', mediaType: 'audio/wav' },
+    { type: 'image', image: 'image123', mediaType: 'image/jpeg' },
+  ]);
+  assert.match(result.text, /mediaPartsAttached":2/);
+  assert.doesNotMatch(result.text, /audio123/);
+  assert.doesNotMatch(result.text, /image123/);
+});
+
 function promptBuilder(messages: ModelMessage[]): SoundingPromptBuilder {
   const models = {
     listModelIds: () => [model.id],

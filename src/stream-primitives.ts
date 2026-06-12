@@ -769,6 +769,7 @@ export class AudioFileStream implements WatchStream {
   }
 
   async readInitialChunk(): Promise<JsonObject | undefined> {
+    this.lastPopTime = new Date();
     const duration = Math.min(1, this.duration - this.audioTime);
     const chunk = await readAudioChunk({
       file: this.file,
@@ -872,6 +873,7 @@ export class VideoFileStream implements WatchStream {
   }
 
   async readInitialChunk(): Promise<JsonObject | undefined> {
+    this.lastPopTime = new Date();
     const base64 = await extractVideoFrame(this.file, this.videoTime, this.width, this.height);
     if (!base64) {
       return undefined;
@@ -978,6 +980,7 @@ export class AudioVideoFileStream implements WatchStream {
   }
 
   async readInitialChunk(): Promise<JsonObject | undefined> {
+    this.lastPopTime = new Date();
     const initialDuration = Math.min(1, this.duration - this.mediaTime);
     const [audio, frame] = await Promise.all([
       readAudioChunk({
