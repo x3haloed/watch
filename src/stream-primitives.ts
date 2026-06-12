@@ -531,6 +531,7 @@ export function extractAudioSlice(
       '-i', filePath,
       ...(sampleRate ? ['-ar', sampleRate.toString()] : []),
       ...(channels ? ['-ac', channels.toString()] : []),
+      ...audioEncodingArgs(targetFormat),
       '-f', targetFormat,
       'pipe:1',
     ];
@@ -553,6 +554,25 @@ export function extractAudioSlice(
       resolve(null);
     });
   });
+}
+
+function audioEncodingArgs(format: string): string[] {
+  if (format === 'mp3') {
+    return ['-codec:a', 'libmp3lame', '-b:a', '32k'];
+  }
+  if (format === 'ogg') {
+    return ['-codec:a', 'libvorbis', '-b:a', '32k'];
+  }
+  if (format === 'm4a') {
+    return ['-codec:a', 'aac', '-b:a', '48k', '-movflags', 'frag_keyframe+empty_moov'];
+  }
+  if (format === 'aac') {
+    return ['-codec:a', 'aac', '-b:a', '48k'];
+  }
+  if (format === 'flac') {
+    return ['-codec:a', 'flac', '-compression_level', '8'];
+  }
+  return [];
 }
 
 export function extractVideoFrame(
@@ -621,7 +641,7 @@ export function extractVideoSlice(
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
       '-preset', 'veryfast',
-      '-crf', '28',
+      '-crf', '32',
       '-movflags', 'frag_keyframe+empty_moov',
       '-f', 'mp4',
       'pipe:1',

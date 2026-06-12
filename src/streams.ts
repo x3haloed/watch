@@ -38,7 +38,7 @@ const DEFAULT_MEDIA_VIDEO_WIDTH = 640;
 const DEFAULT_MEDIA_VIDEO_HEIGHT = 360;
 const DEFAULT_MEDIA_AUDIO_SAMPLE_RATE = 16000;
 const DEFAULT_MEDIA_AUDIO_CHANNELS = 1;
-const DEFAULT_MEDIA_AUDIO_FORMAT = 'wav';
+const DEFAULT_MEDIA_AUDIO_FORMAT = 'mp3';
 
 export class StreamRegistry {
   private readonly messages: MessageInbox;
