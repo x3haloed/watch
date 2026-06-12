@@ -33,6 +33,13 @@ import { EventLog } from './event-log.js';
 
 export type { MessageEntry, MessageInbox, StoredMessage, StreamPopContext, WatchStream };
 
+const DEFAULT_MEDIA_VIDEO_FPS = 5;
+const DEFAULT_MEDIA_VIDEO_WIDTH = 640;
+const DEFAULT_MEDIA_VIDEO_HEIGHT = 360;
+const DEFAULT_MEDIA_AUDIO_SAMPLE_RATE = 16000;
+const DEFAULT_MEDIA_AUDIO_CHANNELS = 1;
+const DEFAULT_MEDIA_AUDIO_FORMAT = 'wav';
+
 export class StreamRegistry {
   private readonly messages: MessageInbox;
   private readonly streams = new Map<string, WatchStream>();
@@ -191,8 +198,10 @@ export class StreamRegistry {
     preferVideo?: boolean;
   }): Promise<Record<string, unknown>> {
     const file = this.resolvePath(input.path);
-    const fps = input.fps ?? 1;
+    const fps = input.fps ?? DEFAULT_MEDIA_VIDEO_FPS;
     const speed = input.speed ?? 1;
+    const width = input.width ?? DEFAULT_MEDIA_VIDEO_WIDTH;
+    const height = input.height ?? DEFAULT_MEDIA_VIDEO_HEIGHT;
     const startSecond = input.resumeAtSecond ?? 0;
     const duration = await getMediaDuration(file);
 
@@ -204,8 +213,8 @@ export class StreamRegistry {
       speed,
       startSecond,
       duration,
-      input.width,
-      input.height,
+      width,
+      height,
       input.preferVideo ?? false,
     );
 
@@ -222,8 +231,8 @@ export class StreamRegistry {
       filename: basename(file),
       fps,
       speed,
-      width: input.width,
-      height: input.height,
+      width,
+      height,
       videoTime: startSecond,
       duration,
       subscribed: !stream.isDone(),
@@ -263,9 +272,9 @@ export class StreamRegistry {
   }): Promise<Record<string, unknown>> {
     const file = this.resolvePath(input.path);
     const speed = input.speed ?? 1;
-    const sampleRate = input.sampleRate ?? 16000;
-    const channels = input.channels ?? 1;
-    const format = input.format ?? 'wav';
+    const sampleRate = input.sampleRate ?? DEFAULT_MEDIA_AUDIO_SAMPLE_RATE;
+    const channels = input.channels ?? DEFAULT_MEDIA_AUDIO_CHANNELS;
+    const format = input.format ?? DEFAULT_MEDIA_AUDIO_FORMAT;
     const startSecond = input.resumeAtSecond ?? 0;
     const duration = await getMediaDuration(file);
 
@@ -338,11 +347,13 @@ export class StreamRegistry {
     preferVideo?: boolean;
   }): Promise<Record<string, unknown>> {
     const file = this.resolvePath(input.path);
-    const fps = input.fps ?? 1;
+    const fps = input.fps ?? DEFAULT_MEDIA_VIDEO_FPS;
     const speed = input.speed ?? 1;
-    const sampleRate = input.sampleRate ?? 16000;
-    const channels = input.channels ?? 1;
-    const format = input.format ?? 'wav';
+    const sampleRate = input.sampleRate ?? DEFAULT_MEDIA_AUDIO_SAMPLE_RATE;
+    const channels = input.channels ?? DEFAULT_MEDIA_AUDIO_CHANNELS;
+    const format = input.format ?? DEFAULT_MEDIA_AUDIO_FORMAT;
+    const width = input.width ?? DEFAULT_MEDIA_VIDEO_WIDTH;
+    const height = input.height ?? DEFAULT_MEDIA_VIDEO_HEIGHT;
     const startSecond = input.resumeAtSecond ?? 0;
     const duration = await getMediaDuration(file);
 
@@ -357,8 +368,8 @@ export class StreamRegistry {
       sampleRate,
       channels,
       format,
-      input.width,
-      input.height,
+      width,
+      height,
       input.preferVideo ?? false,
     );
 
@@ -375,8 +386,8 @@ export class StreamRegistry {
       filename: basename(file),
       fps,
       speed,
-      width: input.width,
-      height: input.height,
+      width,
+      height,
       sampleRate,
       channels,
       format,

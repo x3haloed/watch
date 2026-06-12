@@ -598,6 +598,7 @@ export function extractVideoSlice(
   filePath: string,
   startSecond: number,
   durationSeconds: number,
+  fps?: number,
   width?: number,
   height?: number,
 ): Promise<string | null> {
@@ -607,15 +608,20 @@ export function extractVideoSlice(
       return;
     }
 
-    const scaleFilter = (width && height) ? `scale=${width}:${height}:force_original_aspect_ratio=decrease` : undefined;
+    const filters = [
+      (width && height) ? `scale=${width}:${height}:force_original_aspect_ratio=decrease` : undefined,
+      fps ? `fps=${fps}` : undefined,
+    ].filter((filter): filter is string => typeof filter === 'string');
     const args = [
       '-ss', startSecond.toFixed(3),
       '-t', durationSeconds.toFixed(3),
       '-i', filePath,
-      ...(scaleFilter ? ['-vf', scaleFilter] : []),
+      ...(filters.length > 0 ? ['-vf', filters.join(',')] : []),
       '-an',
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
+      '-preset', 'veryfast',
+      '-crf', '28',
       '-movflags', 'frag_keyframe+empty_moov',
       '-f', 'mp4',
       'pipe:1',
@@ -756,7 +762,7 @@ async function readVideoChunk(input: {
   preferVideo: boolean;
 }): Promise<JsonObject | undefined> {
   if (input.preferVideo) {
-    const dataBase64 = await extractVideoSlice(input.file, input.startOffset, input.endOffset - input.startOffset, input.width, input.height);
+    const dataBase64 = await extractVideoSlice(input.file, input.startOffset, input.endOffset - input.startOffset, input.fps, input.width, input.height);
     if (dataBase64) {
       return {
         kind: 'video_file_chunk',
