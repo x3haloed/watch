@@ -119,12 +119,27 @@ export type AudioStreamSnapshot = {
   duration: number;
 };
 
+export type AudioVideoStreamSnapshot = {
+  name: string;
+  file: string;
+  fps: number;
+  speed: number;
+  mediaTime: number;
+  duration: number;
+  width?: number;
+  height?: number;
+  sampleRate: number;
+  channels: number;
+  format: string;
+};
+
 export type StreamRegistrySnapshot = {
   subscriptions: string[];
   knownStreams?: string[];
   textStreams: TextStreamSnapshot[];
   videoStreams?: VideoStreamSnapshot[];
   audioStreams?: AudioStreamSnapshot[];
+  avStreams?: AudioVideoStreamSnapshot[];
 };
 
 export type DiscordPolicySnapshot = {

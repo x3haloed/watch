@@ -187,6 +187,57 @@ export function createStreamTools(ctx: LookoutToolContext) {
         return result;
       },
     }),
+    av_stream_open: tool({
+      description:
+        'Begin reading one media file containing audio and video as a single gaze stream. Extracts audio chunks and image frames on-the-fly from one shared media timeline based on elapsed time between Soundings. Returns the initial audio/video chunk immediately, then future Soundings include subsequent chunks until media end or av_stream_close/unsubscribe_stream.',
+      inputSchema: jsonSchema<{ path: string; fps?: number; speed?: number; sampleRate?: number; channels?: number; format?: string; resumeAtSecond?: number; width?: number; height?: number }>({
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Audio/video file path. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected.' },
+          fps: { type: 'number', description: 'Optional frame rate to extract. Defaults to 1 (1 frame per video second).' },
+          speed: { type: 'number', description: 'Optional playback speed multiplier. Defaults to 1 (real-time speed).' },
+          sampleRate: { type: 'number', description: 'Optional sample rate to downsample audio (e.g. 16000). Defaults to 16000 Hz.' },
+          channels: { type: 'number', description: 'Optional number of audio channels (e.g. 1 for mono, 2 for stereo). Defaults to 1.' },
+          format: { type: 'string', description: 'Optional target audio container format (e.g. "wav", "mp3"). Defaults to "wav".' },
+          resumeAtSecond: { type: 'number', description: 'Optional starting second offset to read/resume from. Defaults to 0.' },
+          width: { type: 'number', description: 'Optional target width to downsample video resolution.' },
+          height: { type: 'number', description: 'Optional target height to downsample video resolution.' },
+        },
+        required: ['path'],
+        additionalProperties: false,
+      }),
+      execute: async ({ path, fps, speed, sampleRate, channels, format, resumeAtSecond, width, height }) => {
+        const result = await ctx.streams.openAudioVideoFileStream({ path, fps, speed, sampleRate, channels, format, resumeAtSecond, width, height });
+        ctx.log.append({
+          type: 'subscription_changed',
+          at: new Date().toISOString(),
+          stream: String(result.stream ?? 'av-stream'),
+          subscribed: Boolean(result.subscribed),
+        });
+        return formatAudioVideoOpenResult(result);
+      },
+    }),
+    av_stream_close: tool({
+      description: 'Stop and remove an audio/video file gaze stream created by av_stream_open.',
+      inputSchema: jsonSchema<{ stream: string }>({
+        type: 'object',
+        properties: {
+          stream: { type: 'string', description: 'Stream name returned by av_stream_open.' },
+        },
+        required: ['stream'],
+        additionalProperties: false,
+      }),
+      execute: async ({ stream }) => {
+        const result = ctx.streams.closeAudioVideoFileStream(stream);
+        ctx.log.append({
+          type: 'subscription_changed',
+          at: new Date().toISOString(),
+          stream,
+          subscribed: false,
+        });
+        return result;
+      },
+    }),
     report_gaze: tool({
       description: 'Report the current stream subscriptions.',
       inputSchema: jsonSchema<Record<string, never>>({
@@ -228,5 +279,13 @@ function formatAudioOpenResult(result: Record<string, unknown>): Record<string, 
   return {
     ...result,
     message: `audio stream for file ${filename} opened successfully. total duration: ${result.duration}s. speed: ${result.speed}x, sampleRate: ${result.sampleRate}Hz, channels: ${result.channels}, format: ${result.format}. Initial audio chunk extracted:`,
+  };
+}
+
+function formatAudioVideoOpenResult(result: Record<string, unknown>): Record<string, unknown> {
+  const filename = String(result.filename ?? result.file ?? 'audio/video');
+  return {
+    ...result,
+    message: `audio/video stream for file ${filename} opened successfully. total duration: ${result.duration}s. Fps: ${result.fps}, speed: ${result.speed}x, sampleRate: ${result.sampleRate}Hz, channels: ${result.channels}, format: ${result.format}. Initial audio/video chunk extracted:`,
   };
 }

@@ -64,6 +64,69 @@ test('restores configured subscriptions from snapshot while preserving new confi
   assert.equal(registry.listSubscriptions().includes('api:test'), true);
 });
 
+test('restores audio/video file streams as one composite stream', () => {
+  const registry = new StreamRegistry(
+    [],
+    process.cwd(),
+    {
+      subscriptions: ['av:clip.mp4:test'],
+      knownStreams: ['av:clip.mp4:test'],
+      textStreams: [],
+      avStreams: [{
+        name: 'av:clip.mp4:test',
+        file: join(process.cwd(), 'clip.mp4'),
+        fps: 2,
+        speed: 1.5,
+        mediaTime: 3,
+        duration: 10,
+        width: 320,
+        height: 180,
+        sampleRate: 16000,
+        channels: 1,
+        format: 'wav',
+      }],
+    },
+  );
+
+  assert.equal(registry.listStreams().includes('av:clip.mp4:test'), true);
+  assert.equal(registry.listSubscriptions().includes('av:clip.mp4:test'), true);
+
+  const snapshot = registry.snapshot();
+  assert.equal(snapshot.avStreams?.length, 1);
+  assert.equal(snapshot.avStreams?.[0]?.mediaTime, 3);
+  assert.equal(snapshot.avStreams?.[0]?.sampleRate, 16000);
+});
+
+test('closes audio/video file streams by composite stream id', () => {
+  const registry = new StreamRegistry(
+    [],
+    process.cwd(),
+    {
+      subscriptions: ['av:clip.mp4:test'],
+      knownStreams: ['av:clip.mp4:test'],
+      textStreams: [],
+      avStreams: [{
+        name: 'av:clip.mp4:test',
+        file: join(process.cwd(), 'clip.mp4'),
+        fps: 1,
+        speed: 1,
+        mediaTime: 0,
+        duration: 10,
+        sampleRate: 16000,
+        channels: 1,
+        format: 'wav',
+      }],
+    },
+  );
+
+  const result = registry.closeAudioVideoFileStream('av:clip.mp4:test');
+
+  assert.equal(result.closed, true);
+  assert.equal(result.unsubscribed, true);
+  assert.equal(registry.listStreams().includes('av:clip.mp4:test'), false);
+  assert.equal(registry.listSubscriptions().includes('av:clip.mp4:test'), false);
+});
+
 test('child process termination escalates when polite signals are ignored', async () => {
   const proc = spawn(process.execPath, [
     '-e',

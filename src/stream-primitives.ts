@@ -2,7 +2,7 @@ import { readFileSync, unlinkSync } from 'node:fs';
 import { basename } from 'node:path';
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { AudioStreamSnapshot, DesktopCaptureConfig, JsonObject, ModelCapabilities, StreamDelta, TextStreamSnapshot, VideoStreamSnapshot } from './types.js';
+import type { AudioStreamSnapshot, AudioVideoStreamSnapshot, DesktopCaptureConfig, JsonObject, ModelCapabilities, StreamDelta, TextStreamSnapshot, VideoStreamSnapshot } from './types.js';
 import type { MessageInbox, StoredMessage } from './message-inbox.js';
 
 export type StreamPopContext = {
@@ -594,6 +594,109 @@ export function extractVideoFrame(
   });
 }
 
+function audioMimeType(format: string): string {
+  if (format === 'mp3') {
+    return 'audio/mp3';
+  }
+  if (format === 'm4a') {
+    return 'audio/m4a';
+  }
+  return `audio/${format}`;
+}
+
+function elapsedSecondsSince(lastPopTime: Date | undefined, now: Date): number {
+  return lastPopTime ? (now.getTime() - lastPopTime.getTime()) / 1000 : 0;
+}
+
+function nextMediaWindow(mediaTime: number, duration: number, speed: number, elapsedSeconds: number): {
+  startOffset: number;
+  endOffset: number;
+  deltaSeconds: number;
+} {
+  const startOffset = mediaTime;
+  const deltaSeconds = elapsedSeconds * speed;
+  const endOffset = Math.min(duration, startOffset + deltaSeconds);
+  return { startOffset, endOffset, deltaSeconds };
+}
+
+async function readAudioChunk(input: {
+  file: string;
+  stream: string;
+  startOffset: number;
+  endOffset: number;
+  sampleRate: number;
+  channels: number;
+  format: string;
+}): Promise<JsonObject | undefined> {
+  const durationSeconds = input.endOffset - input.startOffset;
+  if (durationSeconds <= 0) {
+    return undefined;
+  }
+
+  // TODO: At tight Sounding cadences (e.g., <5s), spawning ffmpeg per Sounding may introduce
+  // seek + encode overhead. Consider pre-transcoding or using a persistent process.
+  const base64 = await extractAudioSlice(
+    input.file,
+    input.startOffset,
+    durationSeconds,
+    input.sampleRate,
+    input.channels,
+    input.format,
+  );
+  if (!base64) {
+    return undefined;
+  }
+
+  return {
+    kind: 'audio_file_chunk',
+    stream: input.stream,
+    startOffset: input.startOffset,
+    endOffset: input.endOffset,
+    dataBase64: base64,
+    mediaType: audioMimeType(input.format),
+  };
+}
+
+function videoFrameTimestamps(startOffset: number, endOffset: number, deltaSeconds: number, fps: number): number[] {
+  if (deltaSeconds === 0) {
+    return [startOffset];
+  }
+
+  const timestamps: number[] = [];
+  const step = 1 / fps;
+  for (let t = startOffset + step; t <= endOffset; t += step) {
+    timestamps.push(t);
+  }
+  if (timestamps.length === 0 && deltaSeconds > 0) {
+    timestamps.push(endOffset);
+  }
+  return timestamps;
+}
+
+async function readVideoFrames(input: {
+  file: string;
+  startOffset: number;
+  endOffset: number;
+  deltaSeconds: number;
+  fps: number;
+  width?: number;
+  height?: number;
+}): Promise<Array<{ dataBase64: string; mediaType: string; timestamp: number }>> {
+  const frames: Array<{ dataBase64: string; mediaType: string; timestamp: number }> = [];
+  for (const t of videoFrameTimestamps(input.startOffset, input.endOffset, input.deltaSeconds, input.fps)) {
+    // TODO: Spawning ffmpeg per frame/Sounding has spawn overhead. Consider persistent ffmpeg or pre-transcoding.
+    const base64 = await extractVideoFrame(input.file, t, input.width, input.height);
+    if (base64) {
+      frames.push({
+        dataBase64: base64,
+        mediaType: 'image/jpeg',
+        timestamp: t,
+      });
+    }
+  }
+  return frames;
+}
+
 export function isVideoStreamSnapshot(value: unknown): value is VideoStreamSnapshot {
   if (!value || typeof value !== 'object') {
     return false;
@@ -620,6 +723,22 @@ export function isAudioStreamSnapshot(value: unknown): value is AudioStreamSnaps
     && typeof item.format === 'string'
     && typeof item.audioTime === 'number'
     && typeof item.duration === 'number';
+}
+
+export function isAudioVideoStreamSnapshot(value: unknown): value is AudioVideoStreamSnapshot {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const item = value as Partial<AudioVideoStreamSnapshot>;
+  return typeof item.name === 'string'
+    && typeof item.file === 'string'
+    && typeof item.fps === 'number'
+    && typeof item.speed === 'number'
+    && typeof item.mediaTime === 'number'
+    && typeof item.duration === 'number'
+    && typeof item.sampleRate === 'number'
+    && typeof item.channels === 'number'
+    && typeof item.format === 'string';
 }
 
 export class AudioFileStream implements WatchStream {
@@ -651,92 +770,54 @@ export class AudioFileStream implements WatchStream {
 
   async readInitialChunk(): Promise<JsonObject | undefined> {
     const duration = Math.min(1, this.duration - this.audioTime);
-    if (duration <= 0) {
-      return undefined;
-    }
-    const base64 = await extractAudioSlice(
-      this.file,
-      this.audioTime,
-      duration,
-      this.sampleRate,
-      this.channels,
-      this.format,
-    );
-    if (!base64) {
-      return undefined;
-    }
-    let mimeType = `audio/${this.format}`;
-    if (this.format === 'mp3') {
-      mimeType = 'audio/mp3';
-    } else if (this.format === 'm4a') {
-      mimeType = 'audio/m4a';
-    }
-    return {
-      kind: 'audio_file_chunk',
+    const chunk = await readAudioChunk({
+      file: this.file,
       stream: this.name,
       startOffset: this.audioTime,
       endOffset: this.audioTime + duration,
-      dataBase64: base64,
-      mediaType: mimeType,
+      sampleRate: this.sampleRate,
+      channels: this.channels,
+      format: this.format,
+    });
+    if (!chunk) {
+      return undefined;
+    }
+    return {
+      ...chunk,
     };
   }
 
   async popDelta(context: StreamPopContext): Promise<StreamDelta | undefined> {
     const now = context.now;
-    let elapsedSeconds = 0;
-    if (this.lastPopTime) {
-      elapsedSeconds = (now.getTime() - this.lastPopTime.getTime()) / 1000;
-    }
+    const elapsedSeconds = elapsedSecondsSince(this.lastPopTime, now);
     this.lastPopTime = now;
 
-    const startOffset = this.audioTime;
-    const deltaSeconds = elapsedSeconds * this.speed;
-    const endOffset = Math.min(this.duration, startOffset + deltaSeconds);
-
+    const { startOffset, endOffset } = nextMediaWindow(this.audioTime, this.duration, this.speed, elapsedSeconds);
     this.audioTime = endOffset;
 
-    const durationSeconds = endOffset - startOffset;
-    if (durationSeconds <= 0) {
-      return undefined;
-    }
-
-    // TODO: At tight Sounding cadences (e.g., <5s), spawning ffmpeg per Sounding may introduce
-    // seek + encode overhead. Consider pre-transcoding or using a persistent process.
-    const base64 = await extractAudioSlice(
-      this.file,
+    const chunk = await readAudioChunk({
+      file: this.file,
       startOffset,
-      durationSeconds,
-      this.sampleRate,
-      this.channels,
-      this.format,
-    );
-
-    if (!base64) {
+      endOffset,
+      stream: this.name,
+      sampleRate: this.sampleRate,
+      channels: this.channels,
+      format: this.format,
+    });
+    if (!chunk) {
       return undefined;
     }
 
     const done = this.audioTime >= this.duration;
-    let mimeType = `audio/${this.format}`;
-    if (this.format === 'mp3') {
-      mimeType = 'audio/mp3';
-    } else if (this.format === 'm4a') {
-      mimeType = 'audio/m4a';
-    }
-
     return {
       stream: this.name,
       at: now.toISOString(),
       payload: {
-        kind: 'audio_file_chunk',
-        stream: this.name,
+        ...chunk,
         file: this.displayPath,
         filename: basename(this.file),
-        startOffset,
-        endOffset,
         audioTime: this.audioTime,
         duration: this.duration,
-        dataBase64: base64,
-        mediaType: mimeType,
         done,
         hint: done
           ? 'Audio stream reached end and will be removed from gaze.'
@@ -806,44 +887,21 @@ export class VideoFileStream implements WatchStream {
 
   async popDelta(context: StreamPopContext): Promise<StreamDelta | undefined> {
     const now = context.now;
-    let elapsedSeconds = 0;
-    if (this.lastPopTime) {
-      elapsedSeconds = (now.getTime() - this.lastPopTime.getTime()) / 1000;
-    }
+    const elapsedSeconds = elapsedSecondsSince(this.lastPopTime, now);
     this.lastPopTime = now;
 
-    const startOffset = this.videoTime;
-    const deltaSeconds = elapsedSeconds * this.speed;
-    const endOffset = Math.min(this.duration, startOffset + deltaSeconds);
-
+    const { startOffset, endOffset, deltaSeconds } = nextMediaWindow(this.videoTime, this.duration, this.speed, elapsedSeconds);
     this.videoTime = endOffset;
 
-    const timestamps: number[] = [];
-    if (deltaSeconds === 0) {
-      timestamps.push(startOffset);
-    } else {
-      const step = 1 / this.fps;
-      for (let t = startOffset + step; t <= endOffset; t += step) {
-        timestamps.push(t);
-      }
-      if (timestamps.length === 0 && deltaSeconds > 0) {
-        timestamps.push(endOffset);
-      }
-    }
-
-    const frames: Array<{ dataBase64: string; mediaType: string; timestamp: number }> = [];
-    for (const t of timestamps) {
-      // TODO: Spawning ffmpeg per frame/Sounding has spawn overhead. Consider persistent ffmpeg or pre-transcoding.
-      const base64 = await extractVideoFrame(this.file, t, this.width, this.height);
-      if (base64) {
-        frames.push({
-          dataBase64: base64,
-          mediaType: 'image/jpeg',
-          timestamp: t,
-        });
-      }
-    }
-
+    const frames = await readVideoFrames({
+      file: this.file,
+      startOffset,
+      endOffset,
+      deltaSeconds,
+      fps: this.fps,
+      width: this.width,
+      height: this.height,
+    });
     if (frames.length === 0) {
       return undefined;
     }
@@ -885,6 +943,159 @@ export class VideoFileStream implements WatchStream {
       duration: this.duration,
       width: this.width,
       height: this.height,
+    };
+  }
+}
+
+export class AudioVideoFileStream implements WatchStream {
+  readonly waking = false;
+  private mediaTime: number;
+  private lastPopTime: Date | undefined;
+
+  constructor(
+    readonly name: string,
+    private readonly file: string,
+    private readonly displayPath: string,
+    private readonly fps: number,
+    private readonly speed: number,
+    startSecond: number,
+    private readonly duration: number,
+    private readonly sampleRate: number,
+    private readonly channels: number,
+    private readonly format: string,
+    private readonly width?: number,
+    private readonly height?: number,
+  ) {
+    this.mediaTime = startSecond;
+  }
+
+  push(): void {
+    // Audio/video file streams advance only when sampled into a Sounding.
+  }
+
+  hasDelta(): boolean {
+    return this.mediaTime < this.duration;
+  }
+
+  async readInitialChunk(): Promise<JsonObject | undefined> {
+    const initialDuration = Math.min(1, this.duration - this.mediaTime);
+    const [audio, frame] = await Promise.all([
+      readAudioChunk({
+        file: this.file,
+        stream: this.name,
+        startOffset: this.mediaTime,
+        endOffset: this.mediaTime + initialDuration,
+        sampleRate: this.sampleRate,
+        channels: this.channels,
+        format: this.format,
+      }),
+      extractVideoFrame(this.file, this.mediaTime, this.width, this.height),
+    ]);
+
+    const video = frame
+      ? {
+          kind: 'video_frame',
+          stream: this.name,
+          timestamp: this.mediaTime,
+          dataBase64: frame,
+          mediaType: 'image/jpeg',
+        }
+      : undefined;
+
+    if (!audio && !video) {
+      return undefined;
+    }
+
+    return compactJsonObject({
+      kind: 'av_file_chunk',
+      stream: this.name,
+      startOffset: this.mediaTime,
+      endOffset: this.mediaTime + initialDuration,
+      audio,
+      video,
+    });
+  }
+
+  async popDelta(context: StreamPopContext): Promise<StreamDelta | undefined> {
+    const now = context.now;
+    const elapsedSeconds = elapsedSecondsSince(this.lastPopTime, now);
+    this.lastPopTime = now;
+
+    const { startOffset, endOffset, deltaSeconds } = nextMediaWindow(this.mediaTime, this.duration, this.speed, elapsedSeconds);
+    this.mediaTime = endOffset;
+
+    const [audio, frames] = await Promise.all([
+      readAudioChunk({
+        file: this.file,
+        stream: this.name,
+        startOffset,
+        endOffset,
+        sampleRate: this.sampleRate,
+        channels: this.channels,
+        format: this.format,
+      }),
+      readVideoFrames({
+        file: this.file,
+        startOffset,
+        endOffset,
+        deltaSeconds,
+        fps: this.fps,
+        width: this.width,
+        height: this.height,
+      }),
+    ]);
+
+    if (!audio && frames.length === 0) {
+      return undefined;
+    }
+
+    const done = this.mediaTime >= this.duration;
+    return {
+      stream: this.name,
+      at: now.toISOString(),
+      payload: compactJsonObject({
+        kind: 'av_file_chunk',
+        stream: this.name,
+        file: this.displayPath,
+        filename: basename(this.file),
+        startOffset,
+        endOffset,
+        mediaTime: this.mediaTime,
+        duration: this.duration,
+        done,
+        audio,
+        video: frames.length > 0
+          ? {
+              kind: 'video_file_chunk',
+              stream: this.name,
+              count: frames.length,
+              items: frames,
+            }
+          : undefined,
+        hint: done
+          ? 'Audio/video stream reached end and will be removed from gaze.'
+          : `Next Sounding will include audio chunk and video frames. Call av_stream_close or unsubscribe_stream to stop.`,
+      }),
+    };
+  }
+
+  isDone(): boolean {
+    return !this.hasDelta();
+  }
+
+  snapshot(): AudioVideoStreamSnapshot {
+    return {
+      name: this.name,
+      file: this.file,
+      fps: this.fps,
+      speed: this.speed,
+      mediaTime: this.mediaTime,
+      duration: this.duration,
+      width: this.width,
+      height: this.height,
+      sampleRate: this.sampleRate,
+      channels: this.channels,
+      format: this.format,
     };
   }
 }
