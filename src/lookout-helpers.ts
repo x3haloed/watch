@@ -96,7 +96,58 @@ export function mediaToolOutputToModelOutput(output: unknown): Record<string, un
       ],
     };
   }
+  if (result.ok === true) {
+    const mediaItems = mediaContentItemsFromNestedToolOutput(output);
+    if (mediaItems.length > 0) {
+      return {
+        type: 'content',
+        value: [
+          {
+            type: 'text',
+            text: typeof result.text === 'string'
+              ? result.text
+              : typeof (output as { message?: unknown }).message === 'string'
+                ? String((output as { message?: unknown }).message)
+                : 'Tool call succeeded. Media is attached.',
+          },
+          ...mediaItems,
+        ],
+      };
+    }
+  }
   return { type: 'json', value: scrubMediaValue(output) };
+}
+
+function mediaContentItemsFromNestedToolOutput(output: unknown): Array<Record<string, unknown>> {
+  const items: Array<Record<string, unknown>> = [];
+  collectNestedMediaContentItems(output, items);
+  return items;
+}
+
+function collectNestedMediaContentItems(value: unknown, items: Array<Record<string, unknown>>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectNestedMediaContentItems(item, items);
+    }
+    return;
+  }
+  if (!isRecord(value)) {
+    return;
+  }
+
+  if (typeof value.dataBase64 === 'string' && typeof value.mediaType === 'string') {
+    items.push({
+      type: 'media',
+      data: value.dataBase64,
+      mediaType: value.mediaType,
+      ...(typeof value.filename === 'string' ? { filename: value.filename } : {}),
+    });
+    return;
+  }
+
+  for (const item of Object.values(value)) {
+    collectNestedMediaContentItems(item, items);
+  }
 }
 
 export function sanitizeMessagesForHistory(messages: ModelMessage[]): ModelMessage[] {

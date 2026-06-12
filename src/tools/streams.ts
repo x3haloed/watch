@@ -1,4 +1,5 @@
 import { jsonSchema, tool } from 'ai';
+import { mediaToolOutputToModelOutput } from '../lookout-helpers.js';
 import type { LookoutToolContext } from './context.js';
 import type { JsonObject } from '../types.js';
 
@@ -117,6 +118,7 @@ export function createStreamTools(ctx: LookoutToolContext) {
         });
         return formatVideoOpenResult(result);
       },
+      toModelOutput: (options: { output: unknown }) => mediaToolOutputToModelOutput(options.output) as never,
     }),
     video_stream_close: tool({
       description: 'Stop and remove a video file gaze stream created by video_stream_open.',
@@ -165,6 +167,7 @@ export function createStreamTools(ctx: LookoutToolContext) {
         });
         return formatAudioOpenResult(result);
       },
+      toModelOutput: (options: { output: unknown }) => mediaToolOutputToModelOutput(options.output) as never,
     }),
     audio_stream_close: tool({
       description: 'Stop and remove an audio file gaze stream created by audio_stream_open.',
@@ -216,6 +219,7 @@ export function createStreamTools(ctx: LookoutToolContext) {
         });
         return formatAudioVideoOpenResult(result);
       },
+      toModelOutput: (options: { output: unknown }) => mediaToolOutputToModelOutput(options.output) as never,
     }),
     av_stream_close: tool({
       description: 'Stop and remove an audio/video file gaze stream created by av_stream_open.',

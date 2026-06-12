@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { ModelMessage } from 'ai';
 import { SoundingPromptBuilder } from '../src/sounding-prompt.js';
+import { mediaToolOutputToModelOutput, messagesForModel } from '../src/lookout-helpers.js';
 import type { ModelRegistry } from '../src/model-registry.js';
 import type { SkillLibrary } from '../src/skills.js';
 import type { ResolvedModel, Sounding } from '../src/types.js';
@@ -129,6 +130,51 @@ test('attaches nested audio and video media from AV Sounding deltas', () => {
   assert.match(result.text, /mediaPartsAttached":2/);
   assert.doesNotMatch(result.text, /audio123/);
   assert.doesNotMatch(result.text, /image123/);
+});
+
+test('moves nested AV stream-open tool media into a synthetic user message', () => {
+  const output = mediaToolOutputToModelOutput({
+    ok: true,
+    message: 'audio/video stream opened',
+    firstChunk: {
+      kind: 'av_file_chunk',
+      audio: { dataBase64: 'audio123', mediaType: 'audio/wav', startOffset: 0, endOffset: 1 },
+      video: { dataBase64: 'image123', mediaType: 'image/jpeg', timestamp: 0 },
+    },
+  });
+  assert.equal(output.type, 'content');
+
+  const avModel: ResolvedModel = {
+    ...model,
+    capabilities: {
+      ...model.capabilities,
+      audio: true,
+      images: true,
+    },
+  };
+  const messages = messagesForModel(avModel, [
+    {
+      role: 'tool',
+      content: [{
+        type: 'tool-result',
+        toolCallId: 'call-1',
+        toolName: 'av_stream_open',
+        output,
+      }],
+    } as ModelMessage,
+  ]);
+
+  const toolMessage = messages[0] as { role: string; content: Array<{ output: { value: Record<string, unknown> } }> };
+  const userMessage = messages[2] as { role: string; content: unknown[] };
+
+  assert.equal(messages.length, 3);
+  assert.equal(toolMessage.role, 'tool');
+  assert.equal(toolMessage.content[0]?.output.value.mediaAttachedInFollowingUserMessage, true);
+  assert.equal(userMessage.role, 'user');
+  assert.deepEqual(userMessage.content.slice(1), [
+    { type: 'file', data: 'audio123', mediaType: 'audio/wav' },
+    { type: 'image', image: 'image123', mediaType: 'image/jpeg' },
+  ]);
 });
 
 function promptBuilder(messages: ModelMessage[]): SoundingPromptBuilder {
