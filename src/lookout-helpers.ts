@@ -455,7 +455,7 @@ function openRouterVideoTextPart(dataOrUrl: string, mediaType: string): TextPart
 function openRouterAudioFormat(mediaType: string): string | undefined {
   const normalized = mediaType.toLowerCase().split(';')[0]?.trim() ?? '';
   if (normalized === 'audio/wav' || normalized === 'audio/x-wav') return 'wav';
-  if (normalized === 'audio/mp3' || normalized === 'audio/mpeg') return 'mp3';
+  if (normalized === 'audio/mp3' || normalized === 'audio/mpeg' || normalized === 'audio/mpeg3') return 'mp3';
   if (normalized === 'audio/ogg') return 'ogg';
   if (normalized === 'audio/flac' || normalized === 'audio/x-flac') return 'flac';
   if (normalized === 'audio/aac' || normalized === 'audio/x-aac') return 'aac';

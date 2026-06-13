@@ -669,7 +669,7 @@ export function extractVideoSlice(
 
 function audioMimeType(format: string): string {
   if (format === 'mp3') {
-    return 'audio/mp3';
+    return 'audio/mpeg';
   }
   if (format === 'm4a') {
     return 'audio/m4a';

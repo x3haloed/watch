@@ -254,6 +254,72 @@ test('moves nested AV stream-open video bytes into a synthetic user message', ()
   ]);
 });
 
+test('converts legacy MP3 media types for OpenRouter audio input', () => {
+  const openRouterModel: ResolvedModel = {
+    ...model,
+    provider: 'openrouter',
+    capabilities: {
+      ...model.capabilities,
+      audio: true,
+    },
+  };
+  const messages = messagesForModel(openRouterModel, [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'listen' },
+        { type: 'file', data: 'audio123', mediaType: 'audio/mpeg3' },
+      ],
+    } as ModelMessage,
+  ]);
+
+  const userMessage = messages[0] as { role: string; content: unknown[] };
+  assert.equal(userMessage.role, 'user');
+  assert.deepEqual(userMessage.content[0], { type: 'text', text: 'listen' });
+  assert.equal((userMessage.content[1] as { type: string }).type, 'text');
+  assert.match((userMessage.content[1] as { text: string }).text, /^__watch_openrouter_audio__:/);
+  assert.doesNotMatch(JSON.stringify(userMessage.content), /"type":"file"/);
+});
+
+test('moves OpenRouter tool-result MP3 media into an audio sentinel user message', () => {
+  const output = mediaToolOutputToModelOutput({
+    ok: true,
+    message: 'audio stream opened',
+    firstChunk: {
+      kind: 'audio_file_chunk',
+      dataBase64: 'audio123',
+      mediaType: 'audio/mpeg3',
+      startOffset: 0,
+      endOffset: 1,
+    },
+  });
+  const openRouterModel: ResolvedModel = {
+    ...model,
+    provider: 'openrouter',
+    capabilities: {
+      ...model.capabilities,
+      audio: true,
+    },
+  };
+  const messages = messagesForModel(openRouterModel, [
+    {
+      role: 'tool',
+      content: [{
+        type: 'tool-result',
+        toolCallId: 'call-1',
+        toolName: 'audio_stream_open',
+        output,
+      }],
+    } as ModelMessage,
+  ]);
+
+  const userMessage = messages[2] as { role: string; content: unknown[] };
+  assert.equal(userMessage.role, 'user');
+  assert.equal((userMessage.content[1] as { type: string }).type, 'text');
+  assert.match((userMessage.content[1] as { text: string }).text, /^__watch_openrouter_audio__:/);
+  assert.doesNotMatch(JSON.stringify(userMessage.content), /"type":"file"/);
+});
+
 function promptBuilder(messages: ModelMessage[]): SoundingPromptBuilder {
   const models = {
     listModelIds: () => [model.id],
