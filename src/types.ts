@@ -235,12 +235,12 @@ export type WatchEvent =
   | { type: 'terminal_finished'; at: string; soundingId: string; sessionId: string; exitCode: number | null; durationMs: number; output: string; error?: string }
   | { type: 'terminal_input'; at: string; soundingId: string; sessionId: string; text: string }
   | { type: 'terminal_killed'; at: string; soundingId: string; sessionId: string; reason?: string }
-  | { type: 'cli_message'; at: string; soundingId: string; medium?: string; replyToId?: number; message: string; attachments?: string[] }
+  | { type: 'cli_message'; at: string; soundingId: string; medium?: string; replyToId?: number | string; message: string; attachments?: string[] }
   | { type: 'subscription_changed'; at: string; stream: string; subscribed: boolean }
   | { type: 'discord_started'; at: string; userId: string; username: string }
   | { type: 'discord_stopped'; at: string; reason: string }
   | { type: 'discord_inbound'; at: string; messageId: string; channelId: string; authorId: string; reason: string }
-  | { type: 'discord_outbound'; at: string; soundingId: string; replyToId?: number; channelId?: string; messageIds: string[] }
+  | { type: 'discord_outbound'; at: string; soundingId: string; replyToId?: number | string; channelId?: string; messageIds: string[] }
   | { type: 'discord_dropped'; at: string; messageId?: string; channelId?: string; authorId?: string; reason: string }
   | { type: 'discord_attention_changed'; at: string; action: string; scope: JsonObject; policy: JsonObject }
   | { type: 'discord_error'; at: string; error: JsonObject }

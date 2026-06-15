@@ -33,6 +33,11 @@ type WatchableDiscordScope = { kind: 'channel' | 'thread'; id: string };
 type SendableDiscordChannel = TextBasedChannel & {
   send(payload: Record<string, unknown>): Promise<Message>;
 };
+type MessageReadableDiscordChannel = TextBasedChannel & {
+  messages: {
+    fetch(messageId: string): Promise<Message>;
+  };
+};
 
 export type DiscordContextReadInput = {
   inboxMessageId?: number;
@@ -46,10 +51,16 @@ export type DiscordContextReadInput = {
 };
 
 export type DiscordSendInput = {
-  replyToId?: number;
+  replyToId?: number | string;
   channelId?: string;
   message: string;
   attachments?: string[];
+};
+
+export type DiscordReactInput = {
+  id: number | string;
+  channelId?: string;
+  reaction?: string;
 };
 
 export class DiscordBridge {
@@ -302,23 +313,52 @@ export class DiscordBridge {
     return { ok: true, delivered: 'discord', replyToId: input.replyToId, channelId: target.channelId, messages: sent };
   }
 
+  async react(input: DiscordReactInput): Promise<Record<string, unknown>> {
+    if (!this.isEnabled()) {
+      return { ok: false, error: 'Discord bridge is not enabled.' };
+    }
+    if (!this.client.isReady()) {
+      return { ok: false, error: 'Discord bridge is not connected.' };
+    }
+
+    const target = this.resolveDiscordMessageTarget(input.id, input.channelId, 'react');
+    if (!target.ok) {
+      return target;
+    }
+
+    const channel = await this.fetchTextChannel(target.channelId);
+    if (!channel) {
+      return { ok: false, error: `Discord channel not found or not text-readable: ${target.channelId}` };
+    }
+    if (!isMessageReadableChannel(channel)) {
+      return { ok: false, error: `Discord channel does not expose fetchable messages: ${target.channelId}` };
+    }
+
+    const message = await channel.messages.fetch(target.messageId).catch((error: unknown) => error);
+    if (message instanceof Error) {
+      return { ok: false, error: `Discord message not found or not reactable: ${target.messageId}. ${errorMessage(message)}` };
+    }
+    const discordMessage = message as Message;
+
+    const emoji = input.reaction?.trim() || '👍';
+    const reaction = await discordMessage.react(emoji).catch((error: unknown) => error);
+    if (reaction instanceof Error) {
+      return { ok: false, error: errorMessage(reaction), channelId: target.channelId, messageId: target.messageId, reaction: emoji };
+    }
+
+    return {
+      ok: true,
+      delivered: 'discord',
+      channelId: target.channelId,
+      messageId: target.messageId,
+      reaction: emoji,
+      url: discordMessage.url,
+    };
+  }
+
   private resolveSendTarget(input: DiscordSendInput): { ok: true; channelId: string; messageId?: string } | { ok: false; error: string } {
     if (input.replyToId !== undefined) {
-      const stored = this.streams.getMessage(input.replyToId);
-      const discord = readDiscordMetadata(stored?.metadata);
-      if (!discord) {
-        return { ok: false, error: `Inbox message ${input.replyToId} is not a Discord message.` };
-      }
-
-      const requestedChannelId = input.channelId?.trim();
-      if (requestedChannelId && requestedChannelId !== discord.channelId) {
-        return {
-          ok: false,
-          error: `channelId ${requestedChannelId} does not match the Discord inbox message channel ${discord.channelId}.`,
-        };
-      }
-
-      return { ok: true, channelId: discord.channelId, messageId: discord.messageId };
+      return this.resolveDiscordMessageTarget(input.replyToId, input.channelId, 'send_message');
     }
 
     const channelId = input.channelId?.trim();
@@ -327,6 +367,48 @@ export class DiscordBridge {
     }
 
     return { ok: true, channelId };
+  }
+
+  private resolveDiscordMessageTarget(
+    id: number | string,
+    channelId: string | undefined,
+    action: string,
+  ): { ok: true; channelId: string; messageId: string } | { ok: false; error: string } {
+    const parsed = parseMessageLocator(id);
+    if (!parsed.ok) return parsed;
+
+    const requestedChannelId = channelId?.trim();
+    if (parsed.kind === 'discord') {
+      if (!requestedChannelId) {
+        return {
+          ok: false,
+          error: `Discord ${action} with a Discord message ID requires channelId because Discord messages cannot be fetched globally by message ID alone.`,
+        };
+      }
+      return { ok: true, channelId: requestedChannelId, messageId: parsed.id };
+    }
+
+    const stored = this.streams.getMessage(parsed.id);
+    if (!stored) {
+      return { ok: false, error: `Inbox message ${parsed.id} was not found.` };
+    }
+    if (stored.medium !== 'discord') {
+      return { ok: false, error: `Inbox message ${parsed.id} has medium "${stored.medium}". Only medium "discord" supports Discord ${action}.` };
+    }
+
+    const discord = readDiscordMetadata(stored.metadata);
+    if (!discord) {
+      return { ok: false, error: `Inbox message ${parsed.id} is not a Discord message.` };
+    }
+
+    if (requestedChannelId && requestedChannelId !== discord.channelId) {
+      return {
+        ok: false,
+        error: `channelId ${requestedChannelId} does not match the Discord inbox message channel ${discord.channelId}.`,
+      };
+    }
+
+    return { ok: true, channelId: discord.channelId, messageId: discord.messageId };
   }
 
   private async handleMessage(message: Message): Promise<void> {
@@ -694,6 +776,42 @@ function channelDisplayName(channel: TextBasedChannel): string {
 
 function isSendableChannel(channel: TextBasedChannel): channel is SendableDiscordChannel {
   return 'send' in channel && typeof channel.send === 'function';
+}
+
+function isMessageReadableChannel(channel: TextBasedChannel): channel is MessageReadableDiscordChannel {
+  return 'messages' in channel
+    && typeof channel.messages === 'object'
+    && channel.messages !== null
+    && 'fetch' in channel.messages
+    && typeof channel.messages.fetch === 'function';
+}
+
+function parseMessageLocator(id: number | string):
+  | { ok: true; kind: 'inbox'; id: number }
+  | { ok: true; kind: 'discord'; id: string }
+  | { ok: false; error: string } {
+  if (typeof id === 'number') {
+    if (!Number.isFinite(id) || id < 1) {
+      return { ok: false, error: 'Message id must be a positive number or Discord message ID string.' };
+    }
+    if (id > Number.MAX_SAFE_INTEGER) {
+      return { ok: true, kind: 'discord', id: String(Math.trunc(id)) };
+    }
+    return { ok: true, kind: 'inbox', id: Math.floor(id) };
+  }
+
+  const trimmed = id.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return { ok: false, error: 'Message id must be numeric. Pass Discord snowflakes as strings to preserve precision.' };
+  }
+  if (trimmed.length >= 16) {
+    return { ok: true, kind: 'discord', id: trimmed };
+  }
+  const inboxId = Number(trimmed);
+  if (!Number.isSafeInteger(inboxId) || inboxId < 1) {
+    return { ok: false, error: 'Inbox message id must be a positive safe integer.' };
+  }
+  return { ok: true, kind: 'inbox', id: inboxId };
 }
 
 function errorMessage(error: unknown): string {

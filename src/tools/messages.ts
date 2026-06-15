@@ -81,15 +81,42 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
         };
       },
     }),
+    react: tool({
+      description:
+        'React to a Discord message. The id may be an inbox message ID or a Discord message ID snowflake; pass channelId when using a Discord message ID directly. Defaults to 👍 when reaction is omitted. Discord message.react accepts Unicode emoji like "👍", custom emoji IDs, and custom emoji identifiers like "name:id" or "<:name:id>".',
+      inputSchema: jsonSchema<{ id: number | string; channelId?: string; reaction?: string }>({
+        type: 'object',
+        properties: {
+          id: {
+            anyOf: [{ type: 'number' }, { type: 'string' }],
+            description: 'Inbox message ID or Discord message ID. Use a string for Discord snowflakes to preserve precision.',
+          },
+          channelId: { type: 'string', description: 'Discord channel or thread ID. Required when id is a Discord message ID instead of an inbox ID.' },
+          reaction: {
+            type: 'string',
+            description: 'Optional reaction. Defaults to 👍. Accepts Unicode emoji, custom emoji IDs, and custom emoji identifiers like "name:id" or "<:name:id>".',
+          },
+        },
+        required: ['id'],
+        additionalProperties: false,
+      }),
+      execute: async ({ id, channelId, reaction }) => {
+        if (!ctx.discord) return { ok: false, error: 'Discord bridge is not configured.' };
+        return ctx.discord.react({ id, channelId, reaction });
+      },
+    }),
     send_message: tool({
       description:
         'Send a user-facing message to an external medium. Use this for communication; final assistant text is private working speech and is not routed to the user.',
-      inputSchema: jsonSchema<{ medium: string; message: string; replyToId?: number; channelId?: string; attachments?: string[] }>({
+      inputSchema: jsonSchema<{ medium: string; message: string; replyToId?: number | string; channelId?: string; attachments?: string[] }>({
         type: 'object',
         properties: {
           medium: { type: 'string', description: 'Destination medium, for example "cli".' },
           message: { type: 'string', description: 'Message to send.' },
-          replyToId: { type: 'number', description: 'Optional global message ID being replied to.' },
+          replyToId: {
+            anyOf: [{ type: 'number' }, { type: 'string' }],
+            description: 'Optional inbox message ID being replied to. For Discord, may also be a Discord message ID; use a string for Discord snowflakes and include channelId.',
+          },
           channelId: { type: 'string', description: 'Discord channel or thread ID for proactive posting when no replyToId is available.' },
           attachments: {
             type: 'array',
