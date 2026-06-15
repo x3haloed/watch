@@ -5,6 +5,7 @@ import { daemonLockPath, ensureInstanceDir, socketPath, stateDir } from './paths
 import type { ControlRequest, ControlResponse, WatchConfig, SseStreamConfig } from './types.js';
 import { WatchRuntime } from './runtime.js';
 import { EventLog } from './event-log.js';
+import { startCompanionHost, type CompanionHost } from './companion-host.js';
 
 export async function runDaemon(config: WatchConfig): Promise<void> {
   const path = socketPath(config.instanceRoot);
@@ -13,6 +14,7 @@ export async function runDaemon(config: WatchConfig): Promise<void> {
   let stopping = false;
   let rebooting = false;
   let server: ReturnType<typeof createServer> | undefined;
+  let companionHost: CompanionHost | undefined;
   const runtime = new WatchRuntime(config, () => {
     if (stopping || rebooting) {
       return;
@@ -32,6 +34,9 @@ export async function runDaemon(config: WatchConfig): Promise<void> {
     if (server) {
       await closeServer(server);
     }
+    if (companionHost) {
+      await companionHost.close();
+    }
     removeSocket(path);
     lock.release();
     if (restart) {
@@ -49,12 +54,8 @@ export async function runDaemon(config: WatchConfig): Promise<void> {
       handleSocket(socket, async request => {
         const response = await runtime.handle(request);
         if ((request.command === 'stop' || request.command === 'reboot') && !stopping && !rebooting) {
-          stopping = true;
           setTimeout(() => {
-            activeServer.close();
-            if (existsSync(path)) {
-              unlinkSync(path);
-            }
+            void shutdown(request.command === 'reboot' ? 'reboot requested' : 'control request', request.command === 'reboot');
           }, 10);
         }
         return response;
@@ -70,11 +71,13 @@ export async function runDaemon(config: WatchConfig): Promise<void> {
       });
     });
 
+    companionHost = await startCompanionHost(runtime);
     runtime.start();
 
     process.on('SIGINT', () => void shutdown('SIGINT'));
     process.on('SIGTERM', () => void shutdown('SIGTERM'));
   } catch (error) {
+    await companionHost?.close();
     removeSocket(path);
     lock.release();
     throw error;

@@ -23,6 +23,10 @@ export function scratchpadDir(instanceRoot: string): string {
   return join(instanceDir(instanceRoot), 'scratchpad');
 }
 
+export function capturesDir(instanceRoot: string): string {
+  return join(instanceDir(instanceRoot), 'captures');
+}
+
 export function socketPath(instanceRoot: string): string {
   return join(stateDir(instanceRoot), 'watch.sock');
 }

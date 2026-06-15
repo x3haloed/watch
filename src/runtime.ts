@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ControlRequest, ControlResponse, Sounding, WatchConfig } from './types.js';
+import type { ControlRequest, ControlResponse, JsonObject, Sounding, WatchConfig, WatchEvent } from './types.js';
 import { EventLog } from './event-log.js';
 import { Lookout, type RestModelBlockedNotice, type RestModelNotice } from './lookout.js';
 import { StreamRegistry } from './streams.js';
@@ -32,6 +32,7 @@ export class WatchRuntime {
   private soundingActive = false;
   private soundQueued = false;
   private queuedTrigger: Sounding['trigger'] = 'delta';
+  private currentSounding: Sounding | undefined;
   private activeAbortController: AbortController | undefined;
   private noToolSoundings = 0;
   private modelFailureCount = 0;
@@ -93,6 +94,10 @@ export class WatchRuntime {
     );
   }
 
+  get instanceRoot(): string {
+    return this.config.instanceRoot;
+  }
+
   start(): void {
     if (this.running) {
       return;
@@ -127,6 +132,60 @@ export class WatchRuntime {
     this.log.append({ type: 'daemon_stopped', at: new Date().toISOString(), pid: process.pid, reason });
   }
 
+  subscribeEvents(subscriber: (event: WatchEvent) => void): () => void {
+    return this.log.subscribe(subscriber);
+  }
+
+  eventTail(limit = 300): WatchEvent[] {
+    return this.log.tail(limit);
+  }
+
+  async status(): Promise<JsonObject> {
+    return {
+      pid: process.pid,
+      running: this.running,
+      modelId: this.lookout.modelId,
+      restingModelId: this.restingModelId,
+      restAfterNoToolSoundings: this.config.restAfterNoToolSoundings,
+      estimatedTokenWarningThreshold: this.config.estimatedTokenWarningThreshold,
+      noToolSoundings: this.noToolSoundings,
+      availableModels: this.models.listModelIds(),
+      activeModel: await this.models.getActive(),
+      subscriptions: this.streams.listSubscriptions(),
+      discord: this.discord.getAttention(),
+      gazeState: this.gazeStore.snapshot(),
+      scratchpad: this.scratchpad?.read() ?? { ok: false, enabled: false },
+      minCffMs: this.config.minCffMs,
+      maxCffMs: this.config.maxCffMs,
+      modelTimeoutMs: this.config.modelTimeoutMs,
+      noModel: this.config.noModel,
+      soundingActive: this.soundingActive,
+      soundQueued: this.soundQueued,
+      currentSounding: this.currentSounding,
+      modelFailureCount: this.modelFailureCount,
+      modelBackoffUntil: this.modelBackoffUntil > Date.now() ? new Date(this.modelBackoffUntil).toISOString() : undefined,
+      pendingDeltas: this.streams.hasPending(),
+    };
+  }
+
+  enqueueInboxMessage(message: string, source = 'cli', metadata?: JsonObject): { accepted: boolean } {
+    const accepted = this.streams.push('inbox', {
+      medium: source,
+      source,
+      message,
+      metadata,
+    });
+    if (accepted) {
+      this.log.append({
+        type: 'stream_buffered',
+        at: new Date().toISOString(),
+        stream: 'inbox',
+        payload: { source, message, metadata },
+      });
+    }
+    return { accepted };
+  }
+
   async handle(request: ControlRequest): Promise<ControlResponse> {
     if (request.command !== 'status') {
       this.log.append({
@@ -138,49 +197,12 @@ export class WatchRuntime {
     }
 
     if (request.command === 'send') {
-      const accepted = this.streams.push('inbox', {
-        medium: request.source ?? 'cli',
-        source: request.source ?? 'cli',
-        message: request.message,
-      });
-      if (accepted) {
-        this.log.append({
-          type: 'stream_buffered',
-          at: new Date().toISOString(),
-          stream: 'inbox',
-          payload: { source: request.source ?? 'cli' },
-        });
-      }
+      const { accepted } = this.enqueueInboxMessage(request.message, request.source ?? 'cli');
       return { ok: true, data: { accepted } };
     }
 
     if (request.command === 'status') {
-      return {
-        ok: true,
-        data: {
-          pid: process.pid,
-          modelId: this.lookout.modelId,
-          restingModelId: this.restingModelId,
-          restAfterNoToolSoundings: this.config.restAfterNoToolSoundings,
-          estimatedTokenWarningThreshold: this.config.estimatedTokenWarningThreshold,
-          noToolSoundings: this.noToolSoundings,
-          availableModels: this.models.listModelIds(),
-          activeModel: await this.models.getActive(),
-          subscriptions: this.streams.listSubscriptions(),
-          discord: this.discord.getAttention(),
-          gazeState: this.gazeStore.snapshot(),
-          scratchpad: this.scratchpad?.read() ?? { ok: false, enabled: false },
-          minCffMs: this.config.minCffMs,
-          maxCffMs: this.config.maxCffMs,
-          modelTimeoutMs: this.config.modelTimeoutMs,
-          noModel: this.config.noModel,
-          soundingActive: this.soundingActive,
-          soundQueued: this.soundQueued,
-          modelFailureCount: this.modelFailureCount,
-          modelBackoffUntil: this.modelBackoffUntil > Date.now() ? new Date(this.modelBackoffUntil).toISOString() : undefined,
-          pendingDeltas: this.streams.hasPending(),
-        },
-      };
+      return { ok: true, data: await this.status() };
     }
 
     if (request.command === 'sound') {
@@ -295,6 +317,7 @@ export class WatchRuntime {
           modelId: model.id,
           model,
         };
+        this.currentSounding = sounding;
         this.lastSoundingAt = now;
         this.log.append({ type: 'sounding_started', at: new Date().toISOString(), sounding });
 
@@ -393,6 +416,7 @@ export class WatchRuntime {
       }
     } finally {
       this.soundingActive = false;
+      this.currentSounding = undefined;
     }
   }
 
