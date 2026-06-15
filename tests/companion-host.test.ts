@@ -51,6 +51,41 @@ test('companion host sends messages through the Watch inbox projection', async (
   }
 });
 
+test('companion visualization stream projects Watch events', async () => {
+  const instanceRoot = mkdtempSync(join(tmpdir(), 'watch-companion-viz-test-'));
+  const previousPort = process.env.WATCH_COMPANION_PORT;
+  const port = await freePort();
+  process.env.WATCH_COMPANION_PORT = String(port);
+
+  const runtime = new WatchRuntime(testConfig(instanceRoot));
+  const host = await startCompanionHost(runtime);
+  runtime.start();
+  const abort = new AbortController();
+
+  try {
+    const stream = await openSseStream(`http://127.0.0.1:${port}/api/visualization/stream`, abort.signal);
+    await stream.waitFor(event => event.type === 'visualization.snapshot');
+    await runtime.handle({ command: 'sound' });
+    const events = await stream.waitFor(
+      event => event.type === 'visualization.output_packet',
+    );
+    assert.ok(events.some(event => event.type === 'visualization.snapshot'));
+    assert.ok(events.some(event => event.type === 'visualization.impact'));
+    assert.ok(events.some(event => event.type === 'visualization.output_packet'));
+    assert.ok(events.some(event => event.type === 'visualization.state'));
+  } finally {
+    abort.abort();
+    await runtime.stop('test done');
+    await host.close();
+    if (previousPort === undefined) {
+      delete process.env.WATCH_COMPANION_PORT;
+    } else {
+      process.env.WATCH_COMPANION_PORT = previousPort;
+    }
+    rmSync(instanceRoot, { recursive: true, force: true });
+  }
+});
+
 async function fetchJson(url: string, init?: RequestInit): Promise<Record<string, any>> {
   const response = await fetch(url, init);
   assert.equal(response.ok, true);
@@ -91,4 +126,97 @@ function freePort(): Promise<number> {
       });
     });
   });
+}
+
+async function openSseStream(url: string, signal: AbortSignal): Promise<{
+  waitFor: (predicate: (event: { type: string; data: unknown }) => boolean) => Promise<Array<{ type: string; data: unknown }>>;
+}> {
+  const response = await fetch(url, { signal });
+  assert.equal(response.ok, true);
+  assert.ok(response.body);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const events: Array<{ type: string; data: unknown }> = [];
+  const waiters: Array<{
+    predicate: (event: { type: string; data: unknown }) => boolean;
+    resolve: (events: Array<{ type: string; data: unknown }>) => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+  }> = [];
+  let buffer = '';
+  void (async () => {
+    try {
+      const { done, value } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      while (true) {
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+        for (const part of parts) {
+          const event = parseSseEvent(part);
+          if (event) {
+            events.push(event);
+            resolveWaiters(events, waiters);
+          }
+        }
+        if (signal.aborted) return;
+        const next = await reader.read();
+        if (next.done) return;
+        buffer += decoder.decode(next.value, { stream: true });
+      }
+    } catch (error) {
+      if (!signal.aborted) {
+        for (const waiter of waiters.splice(0)) {
+          clearTimeout(waiter.timer);
+          waiter.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  })();
+
+  return {
+    waitFor(predicate) {
+      if (events.some(predicate)) {
+        return Promise.resolve([...events]);
+      }
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('timed out waiting for SSE event')), 5_000);
+        waiters.push({ predicate, resolve, reject, timer });
+      });
+    },
+  };
+}
+
+function resolveWaiters(
+  events: Array<{ type: string; data: unknown }>,
+  waiters: Array<{
+    predicate: (event: { type: string; data: unknown }) => boolean;
+    resolve: (events: Array<{ type: string; data: unknown }>) => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+  }>,
+): void {
+  for (let index = waiters.length - 1; index >= 0; index -= 1) {
+    const waiter = waiters[index];
+    if (events.some(waiter.predicate)) {
+      clearTimeout(waiter.timer);
+      waiters.splice(index, 1);
+      waiter.resolve([...events]);
+    }
+  }
+}
+
+function parseSseEvent(raw: string): { type: string; data: unknown } | undefined {
+  const eventLine = raw.split('\n').find(line => line.startsWith('event: '));
+  const dataLine = raw.split('\n').find(line => line.startsWith('data: '));
+  if (!eventLine || !dataLine) {
+    return undefined;
+  }
+  return {
+    type: eventLine.slice('event: '.length),
+    data: JSON.parse(dataLine.slice('data: '.length)),
+  };
 }

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { capturesDir } from './paths.js';
 import { WatchRuntime } from './runtime.js';
 import type { JsonObject, WatchEvent } from './types.js';
+import { WatchVisualizationHub } from './visualization.js';
 
 const DEFAULT_COMPANION_HOST = '127.0.0.1';
 const DEFAULT_COMPANION_PORT = 4478;
@@ -35,8 +36,9 @@ type IncomingAttachment = {
 export async function startCompanionHost(runtime: WatchRuntime): Promise<CompanionHost> {
   const host = process.env.WATCH_COMPANION_HOST || DEFAULT_COMPANION_HOST;
   const port = Number(process.env.WATCH_COMPANION_PORT || DEFAULT_COMPANION_PORT);
+  const visualization = new WatchVisualizationHub(runtime);
   const server = createServer((request, response) => {
-    void routeRequest(runtime, request, response).catch(error => {
+    void routeRequest(runtime, visualization, request, response).catch(error => {
       sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
     });
   });
@@ -53,15 +55,22 @@ export async function startCompanionHost(runtime: WatchRuntime): Promise<Compani
     close: () =>
       new Promise(resolve => {
         try {
+          visualization.close();
           server.close(() => resolve());
         } catch {
+          visualization.close();
           resolve();
         }
       }),
   };
 }
 
-async function routeRequest(runtime: WatchRuntime, request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function routeRequest(
+  runtime: WatchRuntime,
+  visualization: WatchVisualizationHub,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1');
 
   if (request.method === 'GET' && url.pathname === '/api/status') {
@@ -105,7 +114,7 @@ async function routeRequest(runtime: WatchRuntime, request: IncomingMessage, res
   }
 
   if (request.method === 'GET' && url.pathname === '/api/visualization/stream') {
-    streamVisualizationStub(response);
+    streamVisualizationEvents(visualization, response);
     return;
   }
 
@@ -134,35 +143,13 @@ function streamRuntimeEvents(runtime: WatchRuntime, response: ServerResponse): v
   response.on('close', unsubscribe);
 }
 
-function streamVisualizationStub(response: ServerResponse): void {
+function streamVisualizationEvents(visualization: WatchVisualizationHub, response: ServerResponse): void {
   writeSseHeaders(response);
   writeSse(response, 'ready', { ok: true });
-  writeSse(response, 'visualization.snapshot', {
-    type: 'visualization.snapshot',
-    at: new Date().toISOString(),
-    snapshot: {
-      meta: {
-        startedAt: new Date().toISOString(),
-        lastAt: new Date().toISOString(),
-        impactCount: 0,
-        packetCount: 0,
-      },
-      impacts: [],
-      outputPackets: [],
-      state: {
-        activeSoundings: 0,
-        subscriberCount: 1,
-        mode: 'idle',
-        queued: 0,
-        digestion: 0,
-        thinking: 0,
-        pressure: 0,
-        output: 0,
-        tool: 0,
-        call: 0,
-      },
-    },
+  const unsubscribe = visualization.subscribe(event => {
+    writeSse(response, event.type, event);
   });
+  response.on('close', unsubscribe);
 }
 
 async function writeStatusEvent(runtime: WatchRuntime, response: ServerResponse): Promise<void> {
