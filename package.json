@@ -9,6 +9,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "desktop:dev": "electron apps/desktop-companion/main.cjs",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test tests/*.test.ts"
@@ -23,10 +24,12 @@
     "ai": "^6.0.193",
     "blessed": "^0.1.81",
     "discord.js": "^14.26.4",
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "three": "^0.184.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
+    "electron": "^42.4.0",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3"
   }

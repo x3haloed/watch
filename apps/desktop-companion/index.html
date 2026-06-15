@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Watch Companion</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Watch</h1>
+      <div class="presence-controls">
+        <select id="visualization-select" class="visualization-select" aria-label="Visualization">
+          <option value="buzz">BUZZ</option>
+          <option value="ribbed-sphere-dark">Dark sphere</option>
+          <option value="ribbed-sphere-light">Light sphere</option>
+          <option value="ribbed-sphere-purple">Purple sphere</option>
+        </select>
+        <button id="presence-toggle" class="presence-toggle" type="button" aria-pressed="false" title="Switch presence visualization">Rich</button>
+        <div id="status" aria-live="polite">Ready</div>
+      </div>
+    </header>
+    <section id="visualization-host" class="visualization-host" aria-label="Rich presence visualization" hidden></section>
+    <section id="messages" class="messages" aria-label="Conversation history"></section>
+    <section class="composer" aria-label="Message composer">
+      <textarea id="message" placeholder="Message AI"></textarea>
+      <div class="actions">
+        <button id="send" type="button">Send</button>
+        <button id="send-screenshot" type="button">Send with Screenshot</button>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="./renderer.js"></script>
+</body>
+</html>
