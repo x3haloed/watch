@@ -7,7 +7,7 @@ export function createDiscordTools(ctx: LookoutToolContext) {
   return {
     discord_attention: tool({
       description:
-        'Inspect Discord inbound attention. Discord delivers DMs, bot mentions, and replies by default unless muted. Watched channels or threads are also delivered into inbox.',
+        'Inspect Discord inbound attention. Discord delivers DMs, bot mentions, replies, and reactions on the agent\'s own messages by default unless muted. Watched channels or threads are also delivered into inbox. Reaction deltas use the non-waking discord:reactions stream.',
       inputSchema: jsonSchema<Record<string, never>>({
         type: 'object',
         properties: {},
@@ -48,11 +48,11 @@ export function createDiscordTools(ctx: LookoutToolContext) {
     }),
     discord_mute: tool({
       description:
-        'Stop Discord inbox delivery for a scope. Use kind dms, mentions, or replies for default surfaces; use guild, channel, thread, or user with id for specific muting.',
+        'Stop Discord delivery for a scope. Use kind dms, mentions, replies, or reactions for default surfaces; use guild, channel, thread, or user with id for specific muting.',
       inputSchema: jsonSchema<{ kind: string; id?: string }>({
         type: 'object',
         properties: {
-          kind: { type: 'string', description: 'One of dms, mentions, replies, guild, channel, thread, user.' },
+          kind: { type: 'string', description: 'One of dms, mentions, replies, reactions, guild, channel, thread, user.' },
           id: { type: 'string', description: 'Required for guild, channel, thread, and user scopes.' },
         },
         required: ['kind'],
@@ -65,11 +65,11 @@ export function createDiscordTools(ctx: LookoutToolContext) {
     }),
     discord_unmute: tool({
       description:
-        'Restore Discord inbox delivery for a muted scope. Use kind dms, mentions, or replies for default surfaces; use guild, channel, thread, or user with id for specific muting.',
+        'Restore Discord delivery for a muted scope. Use kind dms, mentions, replies, or reactions for default surfaces; use guild, channel, thread, or user with id for specific muting.',
       inputSchema: jsonSchema<{ kind: string; id?: string }>({
         type: 'object',
         properties: {
-          kind: { type: 'string', description: 'One of dms, mentions, replies, guild, channel, thread, user.' },
+          kind: { type: 'string', description: 'One of dms, mentions, replies, reactions, guild, channel, thread, user.' },
           id: { type: 'string', description: 'Required for guild, channel, thread, and user scopes.' },
         },
         required: ['kind'],

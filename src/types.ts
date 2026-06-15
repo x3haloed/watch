@@ -82,6 +82,7 @@ export type DiscordConfig = {
   defaultDMs?: boolean;
   defaultMentions?: boolean;
   defaultReplies?: boolean;
+  defaultReactions?: boolean;
   mutedGuilds?: string[];
   mutedChannels?: string[];
   mutedThreads?: string[];
@@ -146,6 +147,7 @@ export type DiscordPolicySnapshot = {
   defaultDMs: boolean;
   defaultMentions: boolean;
   defaultReplies: boolean;
+  defaultReactions: boolean;
   mutedGuilds: string[];
   mutedChannels: string[];
   mutedThreads: string[];

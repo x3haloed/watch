@@ -5,11 +5,16 @@ import {
   GatewayIntentBits,
   Partials,
   type Message,
+  type MessageReaction,
+  type PartialMessageReaction,
+  type PartialUser,
   type TextBasedChannel,
+  type User,
 } from 'discord.js';
 import { existsSync } from 'node:fs';
 import { EventLog } from './event-log.js';
 import { StreamRegistry } from './streams.js';
+import { compactJsonObject } from './stream-primitives.js';
 import { mediaTypeFromFilename, modalityFromMediaType } from './media.js';
 import type { DiscordConfig, DiscordPolicySnapshot, JsonObject } from './types.js';
 
@@ -17,6 +22,7 @@ type DiscordAttentionPolicy = {
   defaultDMs: boolean;
   defaultMentions: boolean;
   defaultReplies: boolean;
+  defaultReactions: boolean;
   mutedGuilds: Set<string>;
   mutedChannels: Set<string>;
   mutedThreads: Set<string>;
@@ -26,7 +32,7 @@ type DiscordAttentionPolicy = {
 };
 
 type AttentionScope =
-  | { kind: 'dms' | 'mentions' | 'replies' }
+  | { kind: 'dms' | 'mentions' | 'replies' | 'reactions' }
   | { kind: 'guild' | 'channel' | 'thread' | 'user'; id: string };
 
 type WatchableDiscordScope = { kind: 'channel' | 'thread'; id: string };
@@ -38,6 +44,8 @@ type MessageReadableDiscordChannel = TextBasedChannel & {
     fetch(messageId: string): Promise<Message>;
   };
 };
+
+const DISCORD_REACTIONS_STREAM = 'discord:reactions';
 
 export type DiscordContextReadInput = {
   inboxMessageId?: number;
@@ -77,14 +85,17 @@ export class DiscordBridge {
     private readonly onAttentionChanged: (policy: DiscordPolicySnapshot) => void = () => {},
   ) {
     this.policy = normalizePolicy(config, initialPolicy);
+    this.streams.registerBufferedStream(DISCORD_REACTIONS_STREAM, { subscribed: true, waking: false, maxPayloads: 100 });
     this.client = new Client({
       intents: [
         GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.DirectMessageReactions,
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.MessageContent,
       ],
-      partials: [Partials.Channel, Partials.Message],
+      partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
     });
   }
 
@@ -120,6 +131,7 @@ export class DiscordBridge {
       });
     });
     this.client.on(Events.MessageCreate, message => void this.handleMessage(message));
+    this.client.on(Events.MessageReactionAdd, (reaction, user) => void this.handleReactionAdd(reaction, user));
     this.client.on(Events.Error, error => this.logError(error));
 
     try {
@@ -481,6 +493,46 @@ export class DiscordBridge {
     });
   }
 
+  private async handleReactionAdd(reaction: MessageReaction | PartialMessageReaction, user: User | PartialUser): Promise<void> {
+    if (!this.policy.defaultReactions) return;
+    if (!this.botUserId) return;
+    if (user.id === this.botUserId) return;
+
+    const fullReaction = reaction.partial
+      ? await reaction.fetch().catch((error: unknown) => {
+          this.logError(error);
+          return undefined;
+        })
+      : reaction;
+    if (!fullReaction) return;
+
+    const message = fullReaction.message.partial
+      ? await fullReaction.message.fetch().catch((error: unknown) => {
+          this.logError(error);
+          return undefined;
+        })
+      : fullReaction.message;
+    if (!message || message.author?.id !== this.botUserId) return;
+
+    const emoji = fullReaction.emoji;
+    this.streams.push(DISCORD_REACTIONS_STREAM, compactJsonObject({
+      source: 'discord',
+      kind: 'reaction',
+      action: 'add',
+      messageId: message.id,
+      channelId: message.channelId,
+      guildId: message.guildId ?? undefined,
+      userId: user.id,
+      userName: user.tag ?? user.username ?? undefined,
+      emojiId: emoji.id ?? undefined,
+      emojiName: emoji.name ?? undefined,
+      emoji: emoji.identifier ?? emoji.toString(),
+      count: fullReaction.count,
+      url: message.url,
+      hint: `To reply to the message that received this reaction, call send_message with medium "discord", replyToId "${message.id}", channelId "${message.channelId}", and your message content.`,
+    }));
+  }
+
   private resolveContextAnchor(
     input: DiscordContextReadInput,
   ): { ok: true; channelId: string; messageId?: string } | { ok: false; error: string } {
@@ -575,6 +627,7 @@ export class DiscordBridge {
     if (scope.kind === 'dms') this.policy.defaultDMs = !muted;
     if (scope.kind === 'mentions') this.policy.defaultMentions = !muted;
     if (scope.kind === 'replies') this.policy.defaultReplies = !muted;
+    if (scope.kind === 'reactions') this.policy.defaultReactions = !muted;
     if (scope.kind === 'guild') setMembership(this.policy.mutedGuilds, scope.id, muted);
     if (scope.kind === 'channel') setMembership(this.policy.mutedChannels, scope.id, muted);
     if (scope.kind === 'thread') setMembership(this.policy.mutedThreads, scope.id, muted);
@@ -618,7 +671,7 @@ export class DiscordBridge {
 
 export function parseDiscordAttentionScope(kind: string, id?: string): AttentionScope {
   const normalized = kind.trim().toLowerCase();
-  if (normalized === 'dms' || normalized === 'mentions' || normalized === 'replies') {
+  if (normalized === 'dms' || normalized === 'mentions' || normalized === 'replies' || normalized === 'reactions') {
     return { kind: normalized };
   }
   if (['guild', 'channel', 'thread', 'user'].includes(normalized)) {
@@ -628,7 +681,7 @@ export function parseDiscordAttentionScope(kind: string, id?: string): Attention
     }
     return { kind: normalized as 'guild' | 'channel' | 'thread' | 'user', id: cleanId };
   }
-  throw new Error('scope kind must be one of dms, mentions, replies, guild, channel, thread, user');
+  throw new Error('scope kind must be one of dms, mentions, replies, reactions, guild, channel, thread, user');
 }
 
 function normalizePolicy(config?: DiscordConfig, persisted?: DiscordPolicySnapshot): DiscordAttentionPolicy {
@@ -636,6 +689,7 @@ function normalizePolicy(config?: DiscordConfig, persisted?: DiscordPolicySnapsh
     defaultDMs: persisted?.defaultDMs ?? (config?.defaultDMs !== false),
     defaultMentions: persisted?.defaultMentions ?? (config?.defaultMentions !== false),
     defaultReplies: persisted?.defaultReplies ?? (config?.defaultReplies !== false),
+    defaultReactions: persisted?.defaultReactions ?? (config?.defaultReactions !== false),
     mutedGuilds: cleanStringSet(persisted?.mutedGuilds ?? config?.mutedGuilds),
     mutedChannels: cleanStringSet(persisted?.mutedChannels ?? config?.mutedChannels),
     mutedThreads: cleanStringSet(persisted?.mutedThreads ?? config?.mutedThreads),
@@ -650,6 +704,7 @@ function serializePolicy(policy: DiscordAttentionPolicy): DiscordPolicySnapshot 
     defaultDMs: policy.defaultDMs,
     defaultMentions: policy.defaultMentions,
     defaultReplies: policy.defaultReplies,
+    defaultReactions: policy.defaultReactions,
     mutedGuilds: [...policy.mutedGuilds].sort(),
     mutedChannels: [...policy.mutedChannels].sort(),
     mutedThreads: [...policy.mutedThreads].sort(),
