@@ -269,7 +269,7 @@ class BuzzMembrane {
           vec3 rim = vec3(0.56, 0.74, 1.0);
           vec3 tool = vec3(0.32, 1.0, 0.68);
           vec3 call = vec3(1.0, 0.58, 0.20);
-          vec3 output = vec3(0.70, 0.82, 1.0);
+          vec3 outputColor = vec3(0.70, 0.82, 1.0);
           vec3 error = vec3(1.0, 0.20, 0.12);
           float latentCore = (sin(angle * 12.0 + r * 7.0 + uTime * 0.08) * 0.5 + 0.5) * basin;
 
@@ -278,7 +278,7 @@ class BuzzMembrane {
           color += vec3(0.020, 0.030, 0.045) * latentCore * 0.55;
           color += rim * (boundary * (0.22 + latent * 0.22 + uPressure * 0.58 + uReset * 0.58));
           color += rim * ribLine * (0.42 + uThinking * 0.50 + uCall * 0.32);
-          color += output * (orbit * (0.14 + uOutput * 0.95));
+          color += outputColor * (orbit * (0.14 + uOutput * 0.95));
           color += tool * (uTool * (0.16 + ribLine * 0.58));
           color += call * spike * (0.16 + uCall * 0.46);
           color += error * (uError * (0.06 + spike * 0.42));
