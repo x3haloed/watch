@@ -51,6 +51,7 @@ const PROVIDER_TO_MODELS_DEV: Record<string, string> = {
   openai: 'openai',
   anthropic: 'anthropic',
   google: 'google',
+  novitaai: 'novita-ai',
 };
 
 export class ModelRegistry {
@@ -155,19 +156,19 @@ export class ModelRegistry {
     }
 
     return createOpenAICompatible({
-      name: model.id,
-      baseURL: model.baseURL ?? 'http://localhost:1234/v1',
-      apiKey: readApiKey(model.apiKeyEnv) || 'no-key-required',
-      transformRequestBody: args => recordTransformedRequest(args, model, model.provider, recordRequest),
+      name: model.provider,
+      baseURL: openAICompatibleBaseURL(model),
+      apiKey: readApiKey(model.apiKeyEnv ?? defaultApiKeyEnv(model.provider)) || 'no-key-required',
+      transformRequestBody: args => recordTransformedRequest(transformOpenAICompatibleRequestBody(args), model, model.provider, recordRequest),
     })(model.model) as LanguageModel;
   }
 
   async checkAvailable(model: ResolvedModel): Promise<{ ok: true } | { ok: false; reason: string }> {
-    if (model.provider !== 'openai-compatible' || !model.baseURL) {
+    if (!isOpenAICompatibleProvider(model.provider)) {
       return { ok: true };
     }
 
-    const url = `${model.baseURL.replace(/\/$/, '')}/models`;
+    const url = `${openAICompatibleBaseURL(model).replace(/\/$/, '')}/models`;
     try {
       const response = await fetch(url, {
         headers: authHeaders(model),
@@ -285,12 +286,18 @@ export class ModelRegistry {
 
 const WATCH_OPENROUTER_VIDEO_SENTINEL = '__watch_openrouter_video__:';
 const WATCH_OPENROUTER_AUDIO_SENTINEL = '__watch_openrouter_audio__:';
+const WATCH_NOVITA_VIDEO_SENTINEL = '__watch_novita_video__:';
+const WATCH_NOVITA_AUDIO_SENTINEL = '__watch_novita_audio__:';
 
 function transformOpenRouterRequestBody(args: Record<string, any>): Record<string, any> {
+  return transformOpenAICompatibleRequestBody(args);
+}
+
+function transformOpenAICompatibleRequestBody(args: Record<string, any>): Record<string, any> {
   return {
     ...args,
     messages: Array.isArray(args.messages)
-      ? args.messages.map(transformOpenRouterMessage)
+      ? args.messages.map(transformOpenAICompatibleMessage)
       : args.messages,
   };
 }
@@ -309,7 +316,7 @@ function recordTransformedRequest(
   return body;
 }
 
-function transformOpenRouterMessage(message: unknown): unknown {
+function transformOpenAICompatibleMessage(message: unknown): unknown {
   if (!message || typeof message !== 'object') return message;
   const record = message as Record<string, any>;
   if (!Array.isArray(record.content)) return message;
@@ -335,6 +342,27 @@ function transformOpenRouterMessage(message: unknown): unknown {
           input_audio: {
             data: audio.data,
             format: audio.format,
+          },
+        },
+      ];
+    }
+
+    const novitaVideo = parseNovitaVideoSentinel(partRecord.text);
+    if (novitaVideo) {
+      return [
+        ...(novitaVideo.text ? [{ type: 'text', text: novitaVideo.text }] : []),
+        { type: 'video_url', video_url: { url: novitaVideo.url } },
+      ];
+    }
+
+    const novitaAudio = parseNovitaAudioSentinel(partRecord.text);
+    if (novitaAudio) {
+      return [
+        {
+          type: 'input_audio',
+          input_audio: {
+            data: novitaAudio.data,
+            format: novitaAudio.format,
           },
         },
       ];
@@ -370,6 +398,30 @@ function parseOpenRouterAudioSentinel(text: string): { data: string; format: str
   }
 }
 
+function parseNovitaVideoSentinel(text: string): { url: string; text?: string } | undefined {
+  if (!text.startsWith(WATCH_NOVITA_VIDEO_SENTINEL)) return undefined;
+  try {
+    const parsed = JSON.parse(text.slice(WATCH_NOVITA_VIDEO_SENTINEL.length)) as { url?: unknown; text?: unknown };
+    return typeof parsed.url === 'string'
+      ? { url: parsed.url, text: typeof parsed.text === 'string' ? parsed.text : undefined }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseNovitaAudioSentinel(text: string): { data: string; format: string } | undefined {
+  if (!text.startsWith(WATCH_NOVITA_AUDIO_SENTINEL)) return undefined;
+  try {
+    const parsed = JSON.parse(text.slice(WATCH_NOVITA_AUDIO_SENTINEL.length)) as { data?: unknown; format?: unknown };
+    return typeof parsed.data === 'string' && typeof parsed.format === 'string'
+      ? { data: parsed.data, format: parsed.format }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function readConfigFile(instanceRoot: string): WatchConfigFile {
   const path = configPath(instanceRoot);
   if (!existsSync(path)) {
@@ -389,6 +441,17 @@ function inferModelConfig(id: string): ModelConfig {
       provider: 'openrouter',
       model: id.slice('openrouter:'.length),
       apiKeyEnv: 'OPENROUTER_API_KEY',
+    };
+  }
+
+  const novitaPrefix = ['novitaai:', 'novita-ai:', 'novita:'].find(prefix => id.startsWith(prefix));
+  if (novitaPrefix) {
+    return {
+      id,
+      provider: 'novitaai',
+      model: id.slice(novitaPrefix.length),
+      baseURL: 'https://api.novita.ai/openai',
+      apiKeyEnv: 'NOVITA_API_KEY',
     };
   }
 
@@ -416,7 +479,7 @@ function readApiKey(envName?: string): string {
 }
 
 function authHeaders(model: ResolvedModel): Record<string, string> {
-  const apiKey = readApiKey(model.apiKeyEnv);
+  const apiKey = readApiKey(model.apiKeyEnv ?? defaultApiKeyEnv(model.provider));
   return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
 }
 
@@ -431,6 +494,7 @@ function modelsDevProviderId(model: ModelConfig): string | undefined {
     if (url.includes('api.anthropic.com')) return 'anthropic';
     if (url.includes('generativelanguage.googleapis.com')) return 'google';
     if (url.includes('openrouter.ai')) return 'openrouter';
+    if (url.includes('api.novita.ai')) return 'novita-ai';
   }
 
   return PROVIDER_TO_MODELS_DEV[model.provider];
@@ -478,8 +542,25 @@ function conservativeCapabilities(provider: ModelProvider): ModelCapabilities {
     audio: false,
     video: false,
     pdf: false,
-    source: provider === 'openai-compatible' ? 'conservative-openai-compatible' : 'conservative',
+    source: isOpenAICompatibleProvider(provider) ? 'conservative-openai-compatible' : 'conservative',
   };
+}
+
+function isOpenAICompatibleProvider(provider: ModelProvider): boolean {
+  return provider === 'openai-compatible' || provider === 'novitaai';
+}
+
+function openAICompatibleBaseURL(model: ModelConfig): string {
+  if (model.baseURL) {
+    return model.baseURL;
+  }
+  return model.provider === 'novitaai' ? 'https://api.novita.ai/openai' : 'http://localhost:1234/v1';
+}
+
+function defaultApiKeyEnv(provider: ModelProvider): string | undefined {
+  if (provider === 'novitaai') return 'NOVITA_API_KEY';
+  if (provider === 'openrouter') return 'OPENROUTER_API_KEY';
+  return undefined;
 }
 
 function positiveInt(value: unknown): number | undefined {

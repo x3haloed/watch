@@ -154,7 +154,7 @@ export type DiscordPolicySnapshot = {
   watchedThreads: string[];
 };
 
-export type ModelProvider = 'openrouter' | 'openai-compatible';
+export type ModelProvider = 'openrouter' | 'openai-compatible' | 'novitaai';
 
 export type ModelCapabilities = {
   tools: boolean;

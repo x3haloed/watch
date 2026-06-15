@@ -5,8 +5,9 @@ import { mediaPlaceholder, modelSupportsMedia, modalityFromMediaType, type Media
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const WATCH_OPENROUTER_VIDEO_SENTINEL = '__watch_openrouter_video__:';
-
 const WATCH_OPENROUTER_AUDIO_SENTINEL = '__watch_openrouter_audio__:';
+const WATCH_NOVITA_VIDEO_SENTINEL = '__watch_novita_video__:';
+const WATCH_NOVITA_AUDIO_SENTINEL = '__watch_novita_audio__:';
 
 export type ContextFit = {
   ok: boolean;
@@ -157,11 +158,15 @@ export function sanitizeMessagesForHistory(messages: ModelMessage[]): ModelMessa
 export function messagesForModel(model: ResolvedModel, messages: ModelMessage[]): ModelMessage[] {
   const cloned = JSON.parse(JSON.stringify(messages)) as ModelMessage[];
   const supported = replaceUnsupportedMediaForModel(cloned, model) as ModelMessage[];
-  const withOpenRouterMedia = model.provider === 'openrouter' ? convertMediaFilePartsForOpenRouter(supported) : supported;
-  return usesOpenAICompatibleChatProvider(model) ? moveToolResultMediaToUserMessages(withOpenRouterMedia, model) : withOpenRouterMedia;
+  const withProviderMedia = convertMediaFilePartsForProvider(supported, model);
+  return usesOpenAICompatibleChatProvider(model) ? moveToolResultMediaToUserMessages(withProviderMedia, model) : withProviderMedia;
 }
 
 export function convertMediaFilePartsForOpenRouter(messages: ModelMessage[]): ModelMessage[] {
+  return convertMediaFilePartsForProvider(messages, { provider: 'openrouter' } as ResolvedModel);
+}
+
+function convertMediaFilePartsForProvider(messages: ModelMessage[], model: ResolvedModel): ModelMessage[] {
   return messages.map(message => {
     const content = (message as { content?: unknown }).content;
     if (!Array.isArray(content)) {
@@ -170,15 +175,18 @@ export function convertMediaFilePartsForOpenRouter(messages: ModelMessage[]): Mo
     const newContent = content.map(part => {
       if (part && typeof part === 'object' && part.type === 'file') {
         const mediaType = typeof part.mediaType === 'string' ? part.mediaType : '';
-        const videoType = openRouterVideoMediaType(mediaType);
+        const data = typeof part.data === 'string'
+          ? part.data
+          : part.data instanceof URL
+            ? part.data.toString()
+            : '';
+        const videoType = providerVideoMediaType(model, mediaType);
         if (videoType) {
-          const data = typeof part.data === 'string' ? part.data : '';
-          return openRouterVideoTextPart(data, videoType);
+          return providerVideoTextPart(model, data, videoType);
         }
-        const audioFormat = openRouterAudioFormat(mediaType);
+        const audioFormat = providerAudioFormat(model, mediaType);
         if (audioFormat) {
-          const data = typeof part.data === 'string' ? part.data : '';
-          return openRouterAudioTextPart(data, audioFormat);
+          return providerAudioTextPart(model, data, audioFormat);
         }
       }
       return part;
@@ -188,7 +196,7 @@ export function convertMediaFilePartsForOpenRouter(messages: ModelMessage[]): Mo
 }
 
 export function usesOpenAICompatibleChatProvider(model: ResolvedModel): boolean {
-  return model.provider === 'openai-compatible' || model.provider === 'openrouter';
+  return model.provider === 'openai-compatible' || model.provider === 'openrouter' || model.provider === 'novitaai';
 }
 
 export function prepareSoundingDeltas(sounding: Sounding, model: ResolvedModel): { textLines: string[]; mediaParts: SoundingMediaPart[] } {
@@ -293,13 +301,21 @@ export function promptMediaSupportForModel(model: ResolvedModel, mediaType: stri
       return { ok: true };
     }
   }
-  if (normalized.startsWith('video/') && model.capabilities.video) {
+  if (model.provider === 'novitaai') {
+    if (model.capabilities.video && novitaVideoMediaType(normalized)) {
+      return { ok: true };
+    }
+    if (model.capabilities.audio && novitaAudioFormat(normalized)) {
+      return { ok: true };
+    }
+  }
+  if (model.provider !== 'openai-compatible' && normalized.startsWith('video/') && model.capabilities.video) {
     return { ok: true };
   }
   if (normalized.startsWith('image/')) {
     return { ok: true };
   }
-  if (normalized.startsWith('audio/')) {
+  if (openAICompatibleAudioFormat(normalized)) {
     return { ok: true };
   }
   if (normalized === 'application/pdf') {
@@ -310,7 +326,7 @@ export function promptMediaSupportForModel(model: ResolvedModel, mediaType: stri
   }
   return {
     ok: false,
-    reason: `The OpenAI-compatible provider cannot serialize ${mediaType} as model input. It currently supports images, audio formats, PDFs, and text files; OpenRouter also supports MP4/MPEG/MOV/WebM video.`,
+    reason: `The OpenAI-compatible provider cannot serialize ${mediaType} as model input. It currently supports images, WAV/MP3 audio, PDFs, and text files; OpenRouter and NovitaAI also support provider-specific video and audio parts.`,
   };
 }
 
@@ -396,14 +412,14 @@ function mediaUserContentPartsFromToolOutput(output: Record<string, unknown>, mo
     }
 
     if ((item.type === 'media' || item.type === 'file-data') && typeof item.data === 'string') {
-      const openRouterVideoType = model.provider === 'openrouter' ? openRouterVideoMediaType(mediaType) : undefined;
-      if (openRouterVideoType) {
-        parts.push(openRouterVideoTextPart(item.data, openRouterVideoType));
+      const providerVideoType = providerVideoMediaType(model, mediaType);
+      if (providerVideoType) {
+        parts.push(providerVideoTextPart(model, item.data, providerVideoType));
         continue;
       }
-      const openRouterAudioFormatVal = model.provider === 'openrouter' ? openRouterAudioFormat(mediaType) : undefined;
-      if (openRouterAudioFormatVal) {
-        parts.push(openRouterAudioTextPart(item.data, openRouterAudioFormatVal));
+      const providerAudioFormatVal = providerAudioFormat(model, mediaType);
+      if (providerAudioFormatVal) {
+        parts.push(providerAudioTextPart(model, item.data, providerAudioFormatVal));
         continue;
       }
       parts.push({
@@ -421,9 +437,14 @@ function mediaUserContentPartsFromToolOutput(output: Record<string, unknown>, mo
     }
 
     if (item.type === 'file-url' && typeof item.url === 'string') {
-      const openRouterVideoType = model.provider === 'openrouter' ? openRouterVideoMediaType(mediaType) : undefined;
-      if (openRouterVideoType) {
-        parts.push(openRouterVideoTextPart(item.url, openRouterVideoType));
+      const providerVideoType = providerVideoMediaType(model, mediaType);
+      if (providerVideoType) {
+        parts.push(providerVideoTextPart(model, item.url, providerVideoType));
+        continue;
+      }
+      const providerAudioFormatVal = providerAudioFormat(model, mediaType);
+      if (providerAudioFormatVal) {
+        parts.push(providerAudioTextPart(model, item.url, providerAudioFormatVal));
         continue;
       }
       parts.push({ type: 'file', data: new URL(item.url), mediaType });
@@ -442,6 +463,11 @@ function openRouterVideoMediaType(mediaType: string): string | undefined {
   return undefined;
 }
 
+function novitaVideoMediaType(mediaType: string): string | undefined {
+  const normalized = mediaType.toLowerCase().split(';')[0]?.trim() ?? '';
+  return normalized.startsWith('video/') ? normalized : undefined;
+}
+
 function openRouterVideoTextPart(dataOrUrl: string, mediaType: string): TextPart {
   const url = dataOrUrl.startsWith('http') || dataOrUrl.startsWith('data:')
     ? dataOrUrl
@@ -450,6 +476,23 @@ function openRouterVideoTextPart(dataOrUrl: string, mediaType: string): TextPart
     type: 'text',
     text: `${WATCH_OPENROUTER_VIDEO_SENTINEL}${JSON.stringify({ url })}`,
   };
+}
+
+function novitaVideoTextPart(dataOrUrl: string, mediaType: string): TextPart {
+  const url = dataOrUrl.startsWith('http') || dataOrUrl.startsWith('data:')
+    ? dataOrUrl
+    : `data:${mediaType};base64,${dataOrUrl}`;
+  return {
+    type: 'text',
+    text: `${WATCH_NOVITA_VIDEO_SENTINEL}${JSON.stringify({ url })}`,
+  };
+}
+
+function openAICompatibleAudioFormat(mediaType: string): string | undefined {
+  const normalized = mediaType.toLowerCase().split(';')[0]?.trim() ?? '';
+  if (normalized === 'audio/wav' || normalized === 'audio/x-wav') return 'wav';
+  if (normalized === 'audio/mp3' || normalized === 'audio/mpeg') return 'mp3';
+  return undefined;
 }
 
 function openRouterAudioFormat(mediaType: string): string | undefined {
@@ -466,11 +509,46 @@ function openRouterAudioFormat(mediaType: string): string | undefined {
   return undefined;
 }
 
+function novitaAudioFormat(mediaType: string): string | undefined {
+  return openRouterAudioFormat(mediaType);
+}
+
 function openRouterAudioTextPart(base64Data: string, format: string): TextPart {
   return {
     type: 'text',
     text: `${WATCH_OPENROUTER_AUDIO_SENTINEL}${JSON.stringify({ data: base64Data, format })}`,
   };
+}
+
+function novitaAudioTextPart(data: string, format: string): TextPart {
+  return {
+    type: 'text',
+    text: `${WATCH_NOVITA_AUDIO_SENTINEL}${JSON.stringify({ data, format })}`,
+  };
+}
+
+function providerVideoMediaType(model: ResolvedModel, mediaType: string): string | undefined {
+  if (model.provider === 'openrouter') return openRouterVideoMediaType(mediaType);
+  if (model.provider === 'novitaai') return novitaVideoMediaType(mediaType);
+  return undefined;
+}
+
+function providerAudioFormat(model: ResolvedModel, mediaType: string): string | undefined {
+  if (model.provider === 'openrouter') return openRouterAudioFormat(mediaType);
+  if (model.provider === 'novitaai') return novitaAudioFormat(mediaType);
+  return undefined;
+}
+
+function providerVideoTextPart(model: ResolvedModel, dataOrUrl: string, mediaType: string): TextPart {
+  return model.provider === 'novitaai'
+    ? novitaVideoTextPart(dataOrUrl, mediaType)
+    : openRouterVideoTextPart(dataOrUrl, mediaType);
+}
+
+function providerAudioTextPart(model: ResolvedModel, data: string, format: string): TextPart {
+  return model.provider === 'novitaai'
+    ? novitaAudioTextPart(data, format)
+    : openRouterAudioTextPart(data, format);
 }
 
 function textSummaryFromToolOutput(output: Record<string, unknown>): string | undefined {
@@ -875,8 +953,14 @@ export function requiredApiKeyEnv(model: ResolvedModel): string | undefined {
   if (model.provider === 'openai-compatible' && model.baseURL?.includes('localhost')) {
     return undefined;
   }
-  const envName = model.apiKeyEnv ?? (model.provider === 'openrouter' ? 'OPENROUTER_API_KEY' : undefined);
+  const envName = model.apiKeyEnv ?? defaultApiKeyEnv(model.provider);
   return envName && !process.env[envName]?.trim() ? envName : undefined;
+}
+
+function defaultApiKeyEnv(provider: string): string | undefined {
+  if (provider === 'openrouter') return 'OPENROUTER_API_KEY';
+  if (provider === 'novitaai') return 'NOVITA_API_KEY';
+  return undefined;
 }
 
 export function isTimeoutLikeError(error: unknown): boolean {

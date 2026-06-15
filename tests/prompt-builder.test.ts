@@ -136,6 +136,7 @@ test('attaches nested audio and video bytes from AV Sounding deltas for video-ca
   const builder = promptBuilder([]);
   const avModel: ResolvedModel = {
     ...model,
+    provider: 'novitaai',
     capabilities: {
       ...model.capabilities,
       audio: true,
@@ -317,6 +318,78 @@ test('moves OpenRouter tool-result MP3 media into an audio sentinel user message
   assert.equal(userMessage.role, 'user');
   assert.equal((userMessage.content[1] as { type: string }).type, 'text');
   assert.match((userMessage.content[1] as { text: string }).text, /^__watch_openrouter_audio__:/);
+  assert.doesNotMatch(JSON.stringify(userMessage.content), /"type":"file"/);
+});
+
+test('converts NovitaAI video and audio input into Novita sentinels', () => {
+  const novitaModel: ResolvedModel = {
+    ...model,
+    provider: 'novitaai',
+    capabilities: {
+      ...model.capabilities,
+      audio: true,
+      video: true,
+    },
+  };
+  const messages = messagesForModel(novitaModel, [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'inspect' },
+        { type: 'file', data: 'video123', mediaType: 'video/quicktime' },
+        { type: 'file', data: 'audio123', mediaType: 'audio/mpeg3' },
+      ],
+    } as ModelMessage,
+  ]);
+
+  const userMessage = messages[0] as { role: string; content: unknown[] };
+  assert.equal(userMessage.role, 'user');
+  assert.equal((userMessage.content[1] as { type: string }).type, 'text');
+  assert.match((userMessage.content[1] as { text: string }).text, /^__watch_novita_video__:/);
+  assert.equal((userMessage.content[2] as { type: string }).type, 'text');
+  assert.match((userMessage.content[2] as { text: string }).text, /^__watch_novita_audio__:/);
+  assert.doesNotMatch(JSON.stringify(userMessage.content), /__watch_openrouter_/);
+  assert.doesNotMatch(JSON.stringify(userMessage.content), /"type":"file"/);
+});
+
+test('moves NovitaAI tool-result video and audio into Novita sentinel user message', () => {
+  const output = mediaToolOutputToModelOutput({
+    ok: true,
+    message: 'audio/video stream opened',
+    firstChunk: {
+      kind: 'av_file_chunk',
+      audio: { dataBase64: 'audio123', mediaType: 'audio/mpeg3', startOffset: 0, endOffset: 1 },
+      video: { dataBase64: 'video123', mediaType: 'video/mp4', startOffset: 0, endOffset: 1 },
+    },
+  });
+  const novitaModel: ResolvedModel = {
+    ...model,
+    provider: 'novitaai',
+    capabilities: {
+      ...model.capabilities,
+      audio: true,
+      video: true,
+    },
+  };
+  const messages = messagesForModel(novitaModel, [
+    {
+      role: 'tool',
+      content: [{
+        type: 'tool-result',
+        toolCallId: 'call-1',
+        toolName: 'av_stream_open',
+        output,
+      }],
+    } as ModelMessage,
+  ]);
+
+  const userMessage = messages[2] as { role: string; content: unknown[] };
+  assert.equal(userMessage.role, 'user');
+  assert.equal((userMessage.content[1] as { type: string }).type, 'text');
+  assert.match((userMessage.content[1] as { text: string }).text, /^__watch_novita_audio__:/);
+  assert.equal((userMessage.content[2] as { type: string }).type, 'text');
+  assert.match((userMessage.content[2] as { text: string }).text, /^__watch_novita_video__:/);
+  assert.doesNotMatch(JSON.stringify(userMessage.content), /__watch_openrouter_/);
   assert.doesNotMatch(JSON.stringify(userMessage.content), /"type":"file"/);
 });
 
