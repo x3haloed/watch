@@ -1,5 +1,11 @@
 export const visualizations = [
   {
+    id: "aster",
+    name: "Aster",
+    theme: "purple",
+    load: () => import("./aster.js").then((module) => module.asterVisualization),
+  },
+  {
     id: "buzz",
     name: "BUZZ",
     theme: "buzz",
