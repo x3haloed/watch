@@ -4,20 +4,20 @@ const purplePalette = {
   theme: "purple",
   clear: "#020205",
   fog: "#020205",
-  ambient: { color: "#465f80", intensity: 0.55 },
-  key: { color: "#c2d8ff", intensity: 1.2 },
-  outputLight: { color: "#8a59ff", intensity: 5.2 },
-  toolLight: { color: "#51f0a0", intensity: 2.1 },
+  ambient: { color: "#5874a0", intensity: 0.66 },
+  key: { color: "#d2e2ff", intensity: 1.44 },
+  outputLight: { color: "#9b6bff", intensity: 6.25 },
+  toolLight: { color: "#63ffb5", intensity: 2.52 },
   shader: {
     base: "#05040a",
-    rib: "#6b33fa",
-    edge: "#1f73eb",
+    rib: "#7a42ff",
+    edge: "#2d85ff",
     call: "#ff731f",
-    output: "#b3a0ff",
+    output: "#c2b2ff",
   },
-  halo: { color: "#4123a6", opacity: 0.12 },
-  core: { color: "#010007", edge: "#8a59ff", glow: "#51f0a0" },
-  tendril: { primary: "#51f0a0", secondary: "#8a59ff", tertiary: "#1f73eb" },
+  halo: { color: "#5630c8", opacity: 0.15 },
+  core: { color: "#010007", edge: "#a079ff", glow: "#63ffb5" },
+  tendril: { primary: "#63ffb5", secondary: "#a079ff", tertiary: "#2d85ff" },
 };
 
 export const asterVisualization = {
@@ -223,11 +223,11 @@ class AsterSphere {
           float fresnel = pow(1.0 - abs(dot(normalize(vNormal), vec3(0.0, 0.0, 1.0))), 2.2);
           float ribLine = smoothstep(0.62, 0.95, abs(vRib));
           float voidShadow = smoothstep(1.26, 0.16, length(vPos.xy));
-          vec3 color = uBaseColor + uRibColor * (0.2 + ribLine * 0.7) + uEdgeColor * fresnel * 0.72 + uCallColor * uCall * 0.4;
-          color += uOutputColor * uOutput * ribLine * 0.7;
-          color *= 1.0 - voidShadow * (0.36 + uHeartbeat * 0.22);
-          color += uOutputColor * uHeartbeat * voidShadow * 0.16;
-          float alpha = 0.7 + fresnel * 0.28 - uPressure * 0.08 - voidShadow * 0.18;
+          vec3 color = uBaseColor + uRibColor * (0.26 + ribLine * 0.86) + uEdgeColor * fresnel * 0.9 + uCallColor * uCall * 0.45;
+          color += uOutputColor * uOutput * ribLine * 0.82;
+          color *= 1.0 - voidShadow * (0.42 + uHeartbeat * 0.24);
+          color += uOutputColor * uHeartbeat * voidShadow * 0.22;
+          float alpha = 0.88 + fresnel * 0.12 - uPressure * 0.04 - voidShadow * 0.3;
           gl_FragColor = vec4(color, alpha);
         }
       `,
@@ -299,7 +299,7 @@ class AsterSphere {
     this.group.scale.setScalar(1 + state.pressure * 0.06 - state.output * 0.03);
     this.core.scale.setScalar(1 + heartbeat * 0.18 + state.pressure * 0.05);
     this.halo.scale.setScalar(1.02 + state.output * 0.1 + state.call * 0.16 + heartbeat * 0.04);
-    this.halo.material.opacity = 0.1 + state.output * 0.04 + heartbeat * 0.035;
+    this.halo.material.opacity = 0.13 + state.output * 0.05 + heartbeat * 0.045;
   }
 
   dispose() {
@@ -365,7 +365,7 @@ class AsterTendrils {
       const fadeIn = smoothstep(0, 0.16, p);
       const fadeOut = 1 - smoothstep(0.58, 1, p);
       const alpha = fadeIn * fadeOut;
-      tendril.line.material.opacity = alpha * 0.72;
+      tendril.line.material.opacity = alpha * 0.86;
       updateTendrilGeometry(tendril, rise, time);
     }
 
