@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Visualizer Studio</title>
+  <link rel="stylesheet" href="./studio.css" />
+</head>
+<body>
+  <main class="studio-shell">
+    <header class="studio-topbar">
+      <div>
+        <h1>Visualizer Studio</h1>
+        <p>Preview a visualizer module and replay Watch visualization events.</p>
+      </div>
+      <div class="module-controls">
+        <select id="preset-select" aria-label="Preset visualizer"></select>
+        <input id="module-path" type="text" spellcheck="false" aria-label="Visualizer module path" />
+        <input id="export-name" type="text" spellcheck="false" aria-label="Export name" />
+        <button id="load-module" type="button">Load</button>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <section class="preview-column" aria-label="Preview">
+        <div class="preview-toolbar">
+          <div>
+            <strong id="loaded-name">No visualizer loaded</strong>
+            <span id="loaded-theme"></span>
+          </div>
+          <div class="preview-controls" aria-label="Preview size">
+            <div class="segmented-control">
+              <button class="ratio-option" type="button" data-ratio="canonical" aria-pressed="true">2.16:1</button>
+              <button class="ratio-option" type="button" data-ratio="wide" aria-pressed="false">Wide</button>
+              <button class="ratio-option" type="button" data-ratio="ultra" aria-pressed="false">Ultra</button>
+            </div>
+            <button id="remount" type="button">Remount</button>
+          </div>
+        </div>
+        <div id="visualization-host" class="visualization-host" aria-label="Visualizer preview"></div>
+      </section>
+
+      <aside class="control-panel" aria-label="Simulation controls">
+        <section>
+          <h2>Simulate</h2>
+          <div class="button-grid">
+            <button id="send-snapshot" type="button">Snapshot</button>
+            <button id="send-reset" type="button">Reset</button>
+            <button id="send-started" type="button">Started</button>
+            <button id="send-updated" type="button">Updated</button>
+            <button id="send-finished" type="button">Finished</button>
+            <button id="send-failed" type="button">Failed</button>
+            <button id="send-assistant" type="button">Assistant</button>
+            <button id="send-tool-call" type="button">Tool Call</button>
+            <button id="send-tool-result" type="button">Tool Result</button>
+            <button id="send-error" type="button">Error</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>State</h2>
+          <label>
+            Mode
+            <select id="mode">
+              <option value="listening">listening</option>
+              <option value="queued">queued</option>
+              <option value="thinking">thinking</option>
+              <option value="digesting">digesting</option>
+              <option value="tool_call">tool_call</option>
+              <option value="tool_result">tool_result</option>
+              <option value="output">output</option>
+              <option value="error">error</option>
+              <option value="idle">idle</option>
+            </select>
+          </label>
+          <label>
+            Pressure
+            <input id="pressure" type="range" min="0" max="1" step="0.01" value="0.18" />
+          </label>
+          <label>
+            Output
+            <input id="output" type="range" min="0" max="1" step="0.01" value="0" />
+          </label>
+          <label>
+            Tool
+            <input id="tool" type="range" min="0" max="1" step="0.01" value="0" />
+          </label>
+          <label>
+            Call
+            <input id="call" type="range" min="0" max="1" step="0.01" value="0" />
+          </label>
+          <button id="send-state" type="button">Send State</button>
+        </section>
+
+        <section>
+          <h2>Event Log</h2>
+          <pre id="event-log" aria-live="polite"></pre>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script type="module" src="./studio.js"></script>
+</body>
+</html>

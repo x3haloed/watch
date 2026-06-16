@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "desktop:dev": "electron apps/desktop-companion/main.cjs",
+    "visualizer-studio": "python3 -m http.server 4488",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test tests/*.test.ts"
