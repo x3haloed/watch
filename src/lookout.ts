@@ -28,6 +28,7 @@ import {
 import { InferenceForensics } from './inference-forensics.js';
 import { createLookoutTools } from './lookout-tools.js';
 import { MediaService, type OpenMediaInput } from './media-service.js';
+import { MemoryLattice } from './memory-lattice.js';
 import { SessionController, type CurlResult, type RebootRequest } from './session-controller.js';
 import { SoundingPromptBuilder } from './sounding-prompt.js';
 import type { LookoutToolContext, RerouteRequest } from './tools/context.js';
@@ -62,6 +63,7 @@ export class Lookout {
   private readonly prompt: SoundingPromptBuilder;
   private readonly media: MediaService;
   private readonly session: SessionController;
+  private readonly memory: MemoryLattice;
   private readonly tokenTracker = new ContextTokenTracker();
   private readonly cwd: string;
 
@@ -83,6 +85,7 @@ export class Lookout {
     this.skills = new SkillLibrary(instanceRoot);
     this.terminalTools = new TerminalTools(instanceRoot, log);
     this.media = new MediaService(this.fileTools, streams.inbox, models);
+    this.memory = new MemoryLattice(instanceRoot);
     this.prompt = new SoundingPromptBuilder({
       cwd: instanceRoot,
       contextPrompt: buildContextPrompt(instanceRoot),
@@ -95,6 +98,7 @@ export class Lookout {
       estimatedTokenWarningThreshold,
       tokenTracker: this.tokenTracker,
       scratchpad,
+      memory: this.memory,
     });
     this.session = new SessionController({
       cwd: instanceRoot,
@@ -153,12 +157,15 @@ export class Lookout {
   ): Promise<{ text: string; toolCallCount: number }> {
     let activeTurnModel = model;
     let currentStepModel = model;
-    const { text: promptText, mediaParts } = this.prompt.formatSounding({
+    const { text: promptText, mediaParts, memoryCandidateIds } = this.prompt.formatSounding({
       sounding,
       model,
       restModelNotice: options.restModelNotice,
       restModelBlockedNotice: options.restModelBlockedNotice,
     });
+    if (memoryCandidateIds.length > 0) {
+      this.log.append({ type: 'memory_candidates_presented', at: new Date().toISOString(), soundingId: sounding.id, memoryIds: memoryCandidateIds });
+    }
     this.repairMessageHistory();
     // Build content as array when camera/video media is present, string otherwise
     const content = mediaParts.length > 0
@@ -281,6 +288,7 @@ export class Lookout {
       log: this.log,
       discord: this.discord,
       scratchpad: this.scratchpad,
+      memory: this.memory,
       messages: this.messages,
       instructions: () => this.prompt.instructions(),
       contextFitFor: model => this.contextFitFor(model),

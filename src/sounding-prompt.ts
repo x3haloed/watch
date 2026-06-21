@@ -2,6 +2,8 @@ import type { ModelMessage } from 'ai';
 import type { ModelRegistry } from './model-registry.js';
 import type { SkillLibrary } from './skills.js';
 import type { Scratchpad } from './scratchpad.js';
+import type { MemoryLattice } from './memory-lattice.js';
+import { memoryContextFromSounding } from './memory-lattice.js';
 import type { ResolvedModel, Sounding } from './types.js';
 import type { RestModelBlockedNotice, RestModelNotice } from './lookout.js';
 import { LOOKOUT_INSTRUCTIONS } from './lookout-instructions.js';
@@ -35,6 +37,7 @@ export class SoundingPromptBuilder {
       estimatedTokenWarningThreshold: number;
       tokenTracker: ContextTokenTracker;
       scratchpad?: Scratchpad;
+      memory?: MemoryLattice;
     },
   ) {}
 
@@ -53,10 +56,12 @@ export class SoundingPromptBuilder {
     model: ResolvedModel;
     restModelNotice?: RestModelNotice;
     restModelBlockedNotice?: RestModelBlockedNotice;
-  }): { text: string; mediaParts: SoundingMediaPart[] } {
+  }): { text: string; mediaParts: SoundingMediaPart[]; memoryCandidateIds: string[] } {
     const { sounding, model, restModelNotice, restModelBlockedNotice } = input;
     const preparedDeltas = prepareSoundingDeltas(sounding, model);
     const deltas = preparedDeltas.textLines.join('\n');
+    const memoryResult = this.input.memory?.formatCandidateBlock(memoryContextFromSounding(sounding), 12);
+    const memoryBlock = memoryResult?.block ?? '';
     const restModelFrame = restModelNotice ? `
 [model_restored]
 Watch has restored the resting model after ${restModelNotice.noToolSoundings} consecutive Soundings without tool calls.
@@ -90,12 +95,13 @@ ${this.input.models.listModelIds().map(id => `- ${id}`).join('\n')}
 subscriptions:
 ${this.input.listSubscriptions().map(stream => `- ${stream}`).join('\n')}
 [/cff_system]${this.estimatedTokenWarningFrame(model, sounding)}${this.contextDisclosureFrame(model, sounding)}
+${memoryBlock ? `\n${memoryBlock}\n` : ''}
 
 [deltas]
 ${deltas || '(none)'}
 [/deltas]${restModelFrame}${restModelBlockedFrame}`;
 
-    return { text, mediaParts: preparedDeltas.mediaParts };
+    return { text, mediaParts: preparedDeltas.mediaParts, memoryCandidateIds: memoryResult?.candidates.map(candidate => candidate.id) ?? [] };
   }
 
   resetContextDisclosure(): void {

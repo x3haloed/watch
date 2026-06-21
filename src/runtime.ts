@@ -10,6 +10,7 @@ import { Scratchpad } from './scratchpad.js';
 import { CameraStreamBridge, registerCameraStreams } from './camera-streams.js';
 import { DesktopCaptureBridge } from './stream-primitives.js';
 import { classifyInferenceError, type InferenceErrorClassification } from './lookout-helpers.js';
+import { captureInputFromWatchEvent, MemoryLattice } from './memory-lattice.js';
 
 const MODEL_FAILURE_BACKOFF_BASE_MS = 30_000;
 const MODEL_FAILURE_BACKOFF_MAX_MS = 5 * 60_000;
@@ -22,6 +23,7 @@ export class WatchRuntime {
   private readonly discord: DiscordBridge;
   private readonly gazeStore: GazeStore;
   private readonly scratchpad: Scratchpad | undefined;
+  private readonly memory: MemoryLattice;
   private readonly cameraStreams: CameraStreamBridge[];
   private readonly desktopCaptureBridge: DesktopCaptureBridge | undefined;
   private lastSoundingAt = Date.now();
@@ -40,11 +42,14 @@ export class WatchRuntime {
   private readonly restingModelId: string | undefined;
   private pendingRestModelNotice: RestModelNotice | undefined;
   private pendingRestModelBlockedNotice: RestModelBlockedNotice | undefined;
+  private capturingEvent = false;
 
   constructor(private readonly config: WatchConfig, private readonly requestReboot: (source: 'tool' | 'control') => void = () => {}) {
     this.gazeStore = new GazeStore(config.instanceRoot);
     this.scratchpad = config.scratchpad.enabled === false ? undefined : new Scratchpad(config.instanceRoot, config.scratchpad);
     this.log = new EventLog(config.instanceRoot);
+    this.memory = new MemoryLattice(config.instanceRoot);
+    this.log.subscribe(event => this.captureEventEpisode(event));
     this.streams = new StreamRegistry(
       config.webApiStreams,
       config.instanceRoot,
@@ -155,6 +160,7 @@ export class WatchRuntime {
       discord: this.discord.getAttention(),
       gazeState: this.gazeStore.snapshot(),
       scratchpad: this.scratchpad?.read() ?? { ok: false, enabled: false },
+      memory: { recent: this.memory.recent(10) },
       minCffMs: this.config.minCffMs,
       maxCffMs: this.config.maxCffMs,
       modelTimeoutMs: this.config.modelTimeoutMs,
@@ -583,6 +589,23 @@ export class WatchRuntime {
     this.running = false;
     this.soundQueued = false;
     this.requestReboot(source);
+  }
+
+  private captureEventEpisode(event: WatchEvent): void {
+    if (this.capturingEvent) {
+      return;
+    }
+    const input = captureInputFromWatchEvent(event as unknown as { type: string } & JsonObject);
+    if (!input) {
+      return;
+    }
+    this.capturingEvent = true;
+    try {
+      const record = this.memory.captureEpisode(input);
+      this.log.append({ type: 'memory_captured', at: new Date().toISOString(), memoryId: record.id, layer: record.layer, kind: record.kind, source: event.type, provenance: record.provenance });
+    } finally {
+      this.capturingEvent = false;
+    }
   }
 }
 

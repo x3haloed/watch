@@ -249,6 +249,14 @@ export type WatchEvent =
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }
   | { type: 'curl'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number }
   | { type: 'reboot_requested'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number; source: 'tool' | 'control' }
+  | { type: 'memory_captured'; at: string; memoryId: string; layer: string; kind: string; source: string; provenance: JsonObject }
+  | { type: 'memory_candidates_presented'; at: string; soundingId?: string; memoryIds: string[] }
+  | { type: 'memory_reinforced'; at: string; memoryId: string; outcome: string }
+  | { type: 'memory_irrelevant'; at: string; memoryId: string; reason: string }
+  | { type: 'memory_distilled'; at: string; memoryId: string; layer: string; parents: string[] }
+  | { type: 'memory_contradicted'; at: string; memoryId: string; rationale: string }
+  | { type: 'memory_stale'; at: string; memoryId: string; reason: string }
+  | { type: 'memory_scratchpad_proposed'; at: string; memoryId: string; memoryIds: string[] }
   | { type: 'sse_stream_connected'; at: string; stream: string; url: string }
   | { type: 'sse_stream_disconnected'; at: string; stream: string; reason: string }
   | { type: 'sse_stream_error'; at: string; stream: string; error: string }

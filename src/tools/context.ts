@@ -3,6 +3,7 @@ import type { DiscordBridge } from '../discord.js';
 import type { EventLog } from '../event-log.js';
 import type { RepoFileTools } from '../file-tools.js';
 import type { MediaService, OpenMediaInput } from '../media-service.js';
+import type { MemoryLattice } from '../memory-lattice.js';
 import type { MessageInbox } from '../message-inbox.js';
 import type { ModelRegistry } from '../model-registry.js';
 import type { Scratchpad } from '../scratchpad.js';
@@ -32,6 +33,7 @@ export interface LookoutToolContext {
   log: EventLog;
   discord?: DiscordBridge;
   scratchpad?: Scratchpad;
+  memory: MemoryLattice;
   messages: ModelMessage[];
   instructions: () => Promise<string>;
   contextFitFor: (model: ResolvedModel) => Promise<ContextFit>;
