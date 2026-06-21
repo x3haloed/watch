@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MemoryLattice } from '../src/memory-lattice.js';
+import { captureInputFromWatchEvent, MemoryLattice } from '../src/memory-lattice.js';
 
 test('MemoryLattice persists records and model-authored transitions', () => {
   const instanceRoot = mkdtempSync(join(tmpdir(), 'watch-instance-'));
@@ -57,4 +57,31 @@ test('MemoryLattice candidate block treats prompt-like text as data', () => {
   } finally {
     rmSync(instanceRoot, { recursive: true, force: true });
   }
+});
+
+test('automatic lattice capture ignores raw stream events and broad model logs', () => {
+  assert.equal(captureInputFromWatchEvent({
+    type: 'stream_buffered',
+    at: 'now',
+    stream: 'clock',
+    payload: { iso: '2026-06-21T00:00:00.000Z', epochMs: 1 },
+  }), undefined);
+  assert.equal(captureInputFromWatchEvent({
+    type: 'stream_buffered',
+    at: 'now',
+    stream: 'tinygrove',
+    payload: { accepted: true },
+  }), undefined);
+  assert.equal(captureInputFromWatchEvent({
+    type: 'stream_delta',
+    at: 'now',
+    delta: { stream: 'inbox', at: 'now', payload: { message: 'do not store raw stream content' } },
+  }), undefined);
+  assert.equal(captureInputFromWatchEvent({
+    type: 'model_step_finished',
+    at: 'now',
+    soundingId: 's1',
+    modelId: 'm',
+    step: { text: 'verbose' },
+  }), undefined);
 });

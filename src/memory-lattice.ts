@@ -311,11 +311,14 @@ export function captureInputFromWatchEvent(event: { type: string; at?: string } 
   if (event.type.startsWith('memory_')) {
     return undefined;
   }
-  if (event.type === 'stream_buffered' || event.type === 'stream_delta' || event.type === 'discord_inbound' || event.type === 'discord_outbound') {
+  if (event.type === 'stream_buffered' || event.type === 'stream_delta') {
+    return undefined;
+  }
+  if (event.type === 'discord_inbound' || event.type === 'discord_outbound') {
     return {
       kind: 'stream-observation',
       text: truncate(JSON.stringify(event), 1200),
-      tags: ['stream', String((event as JsonObject).stream ?? event.type)].filter(Boolean),
+      tags: ['stream', event.type],
       provenance: { sources: [event.type], soundingIds: soundingIdsFrom(event) },
     };
   }
@@ -337,7 +340,7 @@ export function captureInputFromWatchEvent(event: { type: string; at?: string } 
       provenance: { sources: [event.type], soundingIds: soundingIdsFrom(event) },
     };
   }
-  if (event.type === 'model_step_finished' || event.type === 'model_finished' || event.type === 'cli_message' || event.type === 'control_message') {
+  if (event.type === 'cli_message' || event.type === 'control_message') {
     return {
       kind: String(event.type).replaceAll('_', '-'),
       text: truncate(JSON.stringify(event), 1600),
