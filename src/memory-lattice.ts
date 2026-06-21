@@ -315,38 +315,32 @@ export function captureInputFromWatchEvent(event: { type: string; at?: string } 
     return undefined;
   }
   if (event.type === 'discord_inbound' || event.type === 'discord_outbound') {
-    return {
-      kind: 'stream-observation',
-      text: truncate(JSON.stringify(event), 1200),
-      tags: ['stream', event.type],
-      provenance: { sources: [event.type], soundingIds: soundingIdsFrom(event) },
-    };
+    return undefined;
   }
-  if (event.type === 'sounding_failed' || event.type === 'model_error' || event.type === 'terminal_finished') {
+  if (event.type === 'terminal_finished') {
+    const exitCode = typeof event.exitCode === 'number' ? event.exitCode : 0;
+    if (exitCode === 0) {
+      return undefined;
+    }
     return {
-      kind: event.type === 'terminal_finished' ? 'tool-outcome' : 'failure',
+      kind: 'failure',
       text: truncate(JSON.stringify(event), 1600),
       tags: [event.type],
       confidence: 0.45,
       provenance: { sources: [event.type], soundingIds: soundingIdsFrom(event), toolNames: toolNamesFrom(event) },
     };
   }
-  if (event.type === 'sounding_finished' || event.type === 'model_reroute' || event.type === 'curl' || event.type === 'reboot_requested') {
+  if (event.type === 'sounding_failed' || event.type === 'model_error') {
     return {
-      kind: 'workflow-outcome',
-      text: truncate(JSON.stringify(event), 1600),
-      tags: ['outcome', event.type],
-      confidence: 0.4,
-      provenance: { sources: [event.type], soundingIds: soundingIdsFrom(event) },
-    };
-  }
-  if (event.type === 'cli_message' || event.type === 'control_message') {
-    return {
-      kind: String(event.type).replaceAll('_', '-'),
+      kind: 'failure',
       text: truncate(JSON.stringify(event), 1600),
       tags: [event.type],
+      confidence: 0.45,
       provenance: { sources: [event.type], soundingIds: soundingIdsFrom(event), toolNames: toolNamesFrom(event) },
     };
+  }
+  if (event.type === 'sounding_finished') {
+    return undefined;
   }
   return undefined;
 }

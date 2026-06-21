@@ -59,7 +59,7 @@ test('MemoryLattice candidate block treats prompt-like text as data', () => {
   }
 });
 
-test('automatic lattice capture ignores raw stream events and broad model logs', () => {
+test('automatic lattice capture ignores audit noise but keeps actionable failures', () => {
   assert.equal(captureInputFromWatchEvent({
     type: 'stream_buffered',
     at: 'now',
@@ -84,4 +84,49 @@ test('automatic lattice capture ignores raw stream events and broad model logs',
     modelId: 'm',
     step: { text: 'verbose' },
   }), undefined);
+  assert.equal(captureInputFromWatchEvent({
+    type: 'sounding_finished',
+    at: 'now',
+    soundingId: 's1',
+    modelId: 'm',
+    text: 'Quiet. Waiting.',
+  }), undefined);
+  assert.equal(captureInputFromWatchEvent({
+    type: 'discord_inbound',
+    at: 'now',
+    messageId: '1',
+    channelId: '2',
+    authorId: '3',
+    reason: 'dm',
+  }), undefined);
+  assert.equal(captureInputFromWatchEvent({
+    type: 'curl',
+    at: 'now',
+    soundingId: 's1',
+    wroteLedger: true,
+    clearedMessages: 3,
+  }), undefined);
+  assert.equal(captureInputFromWatchEvent({
+    type: 'control_message',
+    at: 'now',
+    command: 'sound',
+  }), undefined);
+  assert.equal(captureInputFromWatchEvent({
+    type: 'terminal_finished',
+    at: 'now',
+    soundingId: 's1',
+    sessionId: 't1',
+    exitCode: 0,
+    durationMs: 10,
+    output: 'ok',
+  }), undefined);
+  assert.equal(captureInputFromWatchEvent({
+    type: 'terminal_finished',
+    at: 'now',
+    soundingId: 's1',
+    sessionId: 't2',
+    exitCode: 1,
+    durationMs: 10,
+    output: 'failed',
+  })?.kind, 'failure');
 });
