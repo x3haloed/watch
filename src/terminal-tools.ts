@@ -36,6 +36,7 @@ export class TerminalTools {
   constructor(
     private readonly cwd: string,
     private readonly log: EventLog,
+    private readonly redactedEnvNames: string[] = [],
   ) {}
 
   async run(soundingId: string, input: TerminalRunInput): Promise<Record<string, unknown>> {
@@ -143,7 +144,7 @@ export class TerminalTools {
       cwd,
       process: spawn(resolveShell(), ['-lc', command], {
         cwd,
-        env: sanitizedEnv(),
+        env: sanitizedEnv(this.redactedEnvNames),
         stdio: 'pipe',
         detached: process.platform !== 'win32',
       }),
@@ -255,8 +256,8 @@ function resolveShell(): string {
   return process.env.SHELL || '/bin/bash';
 }
 
-function sanitizedEnv(): NodeJS.ProcessEnv {
-  const blocked = new Set(['OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY']);
+function sanitizedEnv(extraBlocked: string[] = []): NodeJS.ProcessEnv {
+  const blocked = new Set(['OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY', 'MOLTBOOK_API_KEY', ...extraBlocked.filter(Boolean)]);
   return Object.fromEntries(Object.entries(process.env).filter(([key]) => !blocked.has(key)));
 }
 

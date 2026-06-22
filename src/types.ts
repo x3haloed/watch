@@ -11,6 +11,7 @@ export type WatchConfig = {
   webApiStreams: WebApiStreamConfig[];
   sseStreams: SseStreamConfig[];
   cameraStreams: CameraStreamConfig[];
+  moltbook?: MoltbookConfig;
   desktopCapture?: DesktopCaptureConfig;
   ledgerPath?: string;
   discord?: DiscordConfig;
@@ -89,6 +90,39 @@ export type DiscordConfig = {
   mutedUsers?: string[];
   watchedChannels?: string[];
   watchedThreads?: string[];
+};
+
+export type MoltbookScopeType = 'home' | 'feed' | 'submolt' | 'user' | 'post' | 'search' | 'announcements';
+
+export type MoltbookScopeConfig = {
+  type: MoltbookScopeType;
+  name?: string;
+  id?: string;
+  query?: string;
+  filter?: 'all' | 'following';
+  sort?: 'new' | 'hot' | 'top' | 'rising' | 'best' | 'old';
+  comments?: boolean;
+  waking?: boolean;
+  intervalMs?: number;
+};
+
+export type MoltbookConfig = {
+  enabled?: boolean;
+  apiKeyEnv?: string;
+  intervalMs?: number;
+  subscribed?: boolean;
+  waking?: boolean;
+  maxItemsPerDelta?: number;
+  scopes?: MoltbookScopeConfig[];
+};
+
+export type MoltbookScopeSnapshot = MoltbookScopeConfig & {
+  key: string;
+  source: 'config' | 'runtime';
+};
+
+export type MoltbookStateSnapshot = {
+  scopes: MoltbookScopeSnapshot[];
 };
 
 export type TextStreamSnapshot = {

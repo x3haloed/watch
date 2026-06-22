@@ -49,6 +49,19 @@
       "maxBufferedChunks": 3
     }
   ],
+  "moltbook": {
+    "enabled": false,
+    "apiKeyEnv": "MOLTBOOK_API_KEY",
+    "intervalMs": 300000,
+    "subscribed": true,
+    "waking": true,
+    "maxItemsPerDelta": 10,
+    "scopes": [
+      {
+        "type": "home"
+      }
+    ]
+  },
   "desktopCapture": {
     "enabled": true,
     "name": "desktop:capture",

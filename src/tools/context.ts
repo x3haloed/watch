@@ -1,5 +1,6 @@
 import type { ModelMessage } from 'ai';
 import type { DiscordBridge } from '../discord.js';
+import type { MoltbookBridge } from '../moltbook.js';
 import type { EventLog } from '../event-log.js';
 import type { RepoFileTools } from '../file-tools.js';
 import type { MediaService, OpenMediaInput } from '../media-service.js';
@@ -32,6 +33,7 @@ export interface LookoutToolContext {
   session: SessionController;
   log: EventLog;
   discord?: DiscordBridge;
+  moltbook?: MoltbookBridge;
   scratchpad?: Scratchpad;
   memory: MemoryLattice;
   messages: ModelMessage[];

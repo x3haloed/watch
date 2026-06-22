@@ -5,6 +5,7 @@ import { Lookout, type RestModelBlockedNotice, type RestModelNotice } from './lo
 import { StreamRegistry } from './streams.js';
 import { ModelRegistry } from './model-registry.js';
 import { DiscordBridge } from './discord.js';
+import { MoltbookBridge } from './moltbook.js';
 import { GazeStore } from './gaze-state.js';
 import { Scratchpad } from './scratchpad.js';
 import { CameraStreamBridge, registerCameraStreams } from './camera-streams.js';
@@ -21,6 +22,7 @@ export class WatchRuntime {
   private readonly lookout: Lookout;
   private readonly models: ModelRegistry;
   private readonly discord: DiscordBridge;
+  private readonly moltbook: MoltbookBridge;
   private readonly gazeStore: GazeStore;
   private readonly scratchpad: Scratchpad | undefined;
   private readonly memory: MemoryLattice;
@@ -81,8 +83,16 @@ export class WatchRuntime {
       this.gazeStore.discord,
       policy => this.gazeStore.updateDiscord(policy),
     );
+    this.moltbook = new MoltbookBridge(
+      config.moltbook,
+      this.streams,
+      this.log,
+      this.gazeStore.moltbook,
+      state => this.gazeStore.updateMoltbook(state),
+    );
     this.gazeStore.updateStreams(this.streams.snapshot());
     this.gazeStore.updateDiscord(this.discord.snapshotPolicy());
+    this.gazeStore.updateMoltbook(this.moltbook.snapshotState());
     this.restingModelId = config.restingModel ?? config.defaultModel;
     this.lookout = new Lookout(
       this.streams,
@@ -95,7 +105,9 @@ export class WatchRuntime {
       config.ledgerPath,
       config.estimatedTokenWarningThreshold,
       this.discord,
+      this.moltbook,
       this.scratchpad,
+      [config.moltbook?.apiKeyEnv ?? 'MOLTBOOK_API_KEY'],
     );
   }
 
@@ -110,6 +122,7 @@ export class WatchRuntime {
     this.running = true;
     this.log.append({ type: 'daemon_started', at: new Date().toISOString(), pid: process.pid, config: this.config });
     void this.discord.start();
+    this.moltbook.start();
     for (const bridge of this.cameraStreams) {
       bridge.start();
     }
@@ -134,6 +147,7 @@ export class WatchRuntime {
       this.desktopCaptureBridge.stop();
     }
     await this.discord.stop(reason);
+    this.moltbook.stop();
     this.log.append({ type: 'daemon_stopped', at: new Date().toISOString(), pid: process.pid, reason });
   }
 
@@ -158,6 +172,7 @@ export class WatchRuntime {
       activeModel: await this.models.getActive(),
       subscriptions: this.streams.listSubscriptions(),
       discord: this.discord.getAttention(),
+      moltbook: this.moltbook.getAttention(),
       gazeState: this.gazeStore.snapshot(),
       scratchpad: this.scratchpad?.read() ?? { ok: false, enabled: false },
       memory: { recent: this.memory.recent(10) },

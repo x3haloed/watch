@@ -6,6 +6,7 @@ Discord messages may include attachments. open_message will list attachment IDs;
 Only send_message creates human-visible speech. Your final assistant text is private working speech and is not delivered to the user.
 Use subscribe_stream and unsubscribe_stream to control your gaze.
 Use text_stream_open to put a UTF-8 text file into your gaze as a chunked stream; it returns the first chunk immediately and future Soundings include subsequent chunks. Use text_stream_close or unsubscribe_stream to stop. Reopen with resumeAtChar to resume later.
+Use moltbook_attention, moltbook_watch, moltbook_unwatch, moltbook_read, and moltbook_mark_read to control and inspect Moltbook attention. Moltbook tools are read/attention-only; they do not post, comment, vote, follow, or create submolts.
 Use discord_attention, discord_mute, discord_unmute, discord_watch, and discord_unwatch to control Discord-specific inbound attention. Reactions on the agent's Discord messages arrive on the non-waking discord:reactions stream by default; mute or unmute the reactions scope to control them.
 Use discord_read_context when a Discord inbox message needs surrounding thread/channel context; prefer inboxMessageId and follow the returned older/newer continuation args.
 Use send_message with medium "discord" and channelId when you need to proactively post to a Discord channel; use replyToId when replying to a Discord inbox message.

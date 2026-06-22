@@ -9,6 +9,7 @@ import { RepoFileTools } from './file-tools.js';
 import { SkillLibrary } from './skills.js';
 import { TerminalTools } from './terminal-tools.js';
 import { DiscordBridge } from './discord.js';
+import { MoltbookBridge } from './moltbook.js';
 import { Scratchpad } from './scratchpad.js';
 import {
   countToolCalls,
@@ -78,12 +79,14 @@ export class Lookout {
     ledgerPath?: string,
     estimatedTokenWarningThreshold = 120_000,
     private readonly discord?: DiscordBridge,
+    private readonly moltbook?: MoltbookBridge,
     private readonly scratchpad?: Scratchpad,
+    redactedEnvNames: string[] = [],
   ) {
     this.cwd = instanceRoot;
     this.fileTools = new RepoFileTools(instanceRoot);
     this.skills = new SkillLibrary(instanceRoot);
-    this.terminalTools = new TerminalTools(instanceRoot, log);
+    this.terminalTools = new TerminalTools(instanceRoot, log, redactedEnvNames);
     this.media = new MediaService(this.fileTools, streams.inbox, models);
     this.memory = new MemoryLattice(instanceRoot);
     this.prompt = new SoundingPromptBuilder({
@@ -287,6 +290,7 @@ export class Lookout {
       session: this.session,
       log: this.log,
       discord: this.discord,
+      moltbook: this.moltbook,
       scratchpad: this.scratchpad,
       memory: this.memory,
       messages: this.messages,
