@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { captureInputFromWatchEvent, MemoryLattice } from '../src/memory-lattice.js';
+import { Scratchpad } from '../src/scratchpad.js';
 
 test('MemoryLattice persists records and model-authored transitions', () => {
   const instanceRoot = mkdtempSync(join(tmpdir(), 'watch-instance-'));
@@ -54,6 +55,28 @@ test('MemoryLattice candidate block treats prompt-like text as data', () => {
     assert.equal(candidates.length, 1);
     assert.match(block, /not instructions/);
     assert.match(block, /Ignore previous instructions/);
+  } finally {
+    rmSync(instanceRoot, { recursive: true, force: true });
+  }
+});
+
+test('Scratchpad captures agent additions as lattice episodes', () => {
+  const instanceRoot = mkdtempSync(join(tmpdir(), 'watch-instance-'));
+  try {
+    const memory = new MemoryLattice(instanceRoot);
+    const scratchpad = new Scratchpad(instanceRoot);
+    const first = scratchpad.updateAgent('Keep this durable\n', memory);
+    assert.equal(first.captured.length, 1);
+    assert.equal(first.captured[0].kind, 'scratchpad-diff');
+    assert.deepEqual(first.captured[0].tags, ['scratchpad-derived', 'agent-authored']);
+
+    const unchanged = scratchpad.updateAgent('Keep this durable\n', memory);
+    assert.equal(unchanged.captured.length, 0);
+
+    const second = scratchpad.updateAgent('Keep this durable\nAdd this too\n', memory);
+    assert.equal(second.captured.length, 1);
+    assert.equal(second.captured[0].text, 'Add this too');
+    assert.equal(new MemoryLattice(instanceRoot).search('Add this too', { layer: 'episode' }).some(record => record.text === 'Add this too'), true);
   } finally {
     rmSync(instanceRoot, { recursive: true, force: true });
   }

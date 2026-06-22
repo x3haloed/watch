@@ -24,7 +24,30 @@ export function createScratchpadTools(ctx: LookoutToolContext) {
         required: ['content'],
         additionalProperties: false,
       }),
-      execute: async ({ content }) => ctx.scratchpad?.updateAgent(content) ?? { ok: false, error: 'Scratchpad is not configured.' },
+      execute: async ({ content }) => {
+        if (!ctx.scratchpad) {
+          return { ok: false, error: 'Scratchpad is not configured.' };
+        }
+        const result = ctx.scratchpad.updateAgent(content, ctx.memory);
+        ctx.log.append({
+          type: 'memory_updated',
+          at: new Date().toISOString(),
+          target: 'scratchpad',
+          payload: { file: 'AGENT.md', chars: content.trim().length, capturedMemoryIds: result.captured.map(record => record.id) },
+        });
+        for (const record of result.captured) {
+          ctx.log.append({
+            type: 'memory_captured',
+            at: new Date().toISOString(),
+            memoryId: record.id,
+            layer: record.layer,
+            kind: record.kind,
+            source: 'scratchpad_update_agent',
+            provenance: record.provenance,
+          });
+        }
+        return result;
+      },
     }),
   };
 }

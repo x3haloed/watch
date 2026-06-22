@@ -283,6 +283,7 @@ export type WatchEvent =
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }
   | { type: 'curl'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number }
   | { type: 'reboot_requested'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number; source: 'tool' | 'control' }
+  | { type: 'memory_updated'; at: string; target: string; payload: JsonObject }
   | { type: 'memory_captured'; at: string; memoryId: string; layer: string; kind: string; source: string; provenance: JsonObject }
   | { type: 'memory_candidates_presented'; at: string; soundingId?: string; memoryIds: string[] }
   | { type: 'memory_reinforced'; at: string; memoryId: string; outcome: string }
