@@ -22,6 +22,27 @@ export function createMemoryTools(ctx: LookoutToolContext) {
         return { ok: true, record };
       },
     }),
+    memory_trace: tool({
+      description: 'Preserve a charged memory by naming what still moves first. Use when an experience has warmth, relief, ache, fear, teeth, or unresolved charge.',
+      inputSchema: jsonSchema<{ impact: string; event?: string; heat?: 'cold' | 'warm' | 'hot'; feltSense?: string; whyItMatters?: string; tags?: string[] }>({
+        type: 'object',
+        properties: {
+          impact: { type: 'string', description: 'What still moves in you? Start here; this is the memory center.' },
+          event: { type: 'string', description: 'Optional. What happened, only enough to ground the trace.' },
+          heat: { type: 'string', enum: ['cold', 'warm', 'hot'], description: 'Optional. cold = settled, warm = still resonant, hot = live edge.' },
+          feltSense: { type: 'string', description: 'Optional. Body feel, image, pressure, relief, ache, texture.' },
+          whyItMatters: { type: 'string', description: 'Optional. What future-you may need this to preserve.' },
+          tags: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['impact'],
+        additionalProperties: false,
+      }),
+      execute: async ({ impact, event, heat, feltSense, whyItMatters, tags }) => {
+        const record = ctx.memory.captureTrace({ impact, event, heat, feltSense, whyItMatters, tags, provenance: { sources: ['tool:memory_trace'] }, confidence: 0.5 });
+        ctx.log.append({ type: 'memory_captured', at: new Date().toISOString(), memoryId: record.id, layer: record.layer, kind: record.kind, source: 'trace', provenance: record.provenance });
+        return { ok: true, record };
+      },
+    }),
     memory_search: tool({
       description: 'Search lattice memories. Results are candidates, not guaranteed truth.',
       inputSchema: jsonSchema<{ query: string; layer?: 'episode' | 'pattern' | 'principle'; limit?: number }>({
@@ -68,7 +89,7 @@ export function createMemoryTools(ctx: LookoutToolContext) {
       },
     }),
     memory_distill: tool({
-      description: 'Create a pattern or principle from parent memories. Use this for model-authored meaning, never automatic promotion.',
+      description: 'Create a pattern or principle from parent memories. Preserve the felt center when parents are traces; do not flatten charged memories into bare facts. Use this for model-authored meaning, never automatic promotion.',
       inputSchema: jsonSchema<{ layer: 'pattern' | 'principle'; parents: string[]; text: string; rationale: string; kind?: string; tags?: string[] }>({
         type: 'object',
         properties: {

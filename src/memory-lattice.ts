@@ -5,6 +5,7 @@ import type { JsonObject, Sounding } from './types.js';
 
 export type MemoryLayer = 'episode' | 'pattern' | 'principle';
 export type MemoryStatus = 'active' | 'stale' | 'contradicted' | 'archived' | 'proposed_for_scratchpad';
+export type MemoryHeat = 'cold' | 'warm' | 'hot';
 
 export type MemoryProvenance = {
   eventIds?: string[];
@@ -38,6 +39,11 @@ export type MemoryRecord = {
   children: string[];
   rationale?: string;
   evidence?: string;
+  impact?: string;
+  event?: string;
+  feltSense?: string;
+  whyItMatters?: string;
+  heat?: MemoryHeat;
   duplicateKey: string;
 };
 
@@ -51,6 +57,17 @@ export type MemoryCaptureInput = {
   kind: string;
   text: string;
   summary?: string;
+  tags?: string[];
+  provenance?: MemoryProvenance;
+  confidence?: number;
+};
+
+export type MemoryTraceInput = {
+  impact: string;
+  event?: string;
+  feltSense?: string;
+  whyItMatters?: string;
+  heat?: MemoryHeat;
   tags?: string[];
   provenance?: MemoryProvenance;
   confidence?: number;
@@ -78,6 +95,25 @@ export class MemoryLattice {
       tags: input.tags ?? [],
       confidence: input.confidence ?? 0.35,
       provenance: input.provenance ?? {},
+    });
+  }
+
+  captureTrace(input: MemoryTraceInput): MemoryRecord {
+    const heat = input.heat ?? 'warm';
+    const text = formatTraceText(input, heat);
+    return this.upsert({
+      layer: 'episode',
+      kind: 'trace',
+      text,
+      summary: summarize(input.impact),
+      tags: unique(['trace', `heat:${heat}`, ...(input.tags ?? [])]),
+      confidence: input.confidence ?? 0.5,
+      provenance: input.provenance ?? {},
+      impact: input.impact,
+      event: input.event,
+      feltSense: input.feltSense,
+      whyItMatters: input.whyItMatters,
+      heat,
     });
   }
 
@@ -217,6 +253,11 @@ export class MemoryLattice {
     parents?: string[];
     rationale?: string;
     evidence?: string;
+    impact?: string;
+    event?: string;
+    feltSense?: string;
+    whyItMatters?: string;
+    heat?: MemoryHeat;
     status?: MemoryStatus;
   }): MemoryRecord {
     const duplicate = duplicateKey(input.layer, input.kind, input.text);
@@ -232,6 +273,11 @@ export class MemoryLattice {
           confidence: Math.max(existing.confidence, input.confidence),
           rationale: input.rationale ?? existing.rationale,
           evidence: input.evidence ?? existing.evidence,
+          impact: input.impact ?? existing.impact,
+          event: input.event ?? existing.event,
+          feltSense: input.feltSense ?? existing.feltSense,
+          whyItMatters: input.whyItMatters ?? existing.whyItMatters,
+          heat: input.heat ?? existing.heat,
         }
       : {
           id: randomUUID(),
@@ -253,6 +299,11 @@ export class MemoryLattice {
           children: [],
           rationale: input.rationale,
           evidence: input.evidence,
+          impact: input.impact,
+          event: input.event,
+          feltSense: input.feltSense,
+          whyItMatters: input.whyItMatters,
+          heat: input.heat,
           duplicateKey: duplicate,
         };
     this.append(record);
@@ -348,7 +399,7 @@ export function captureInputFromWatchEvent(event: { type: string; at?: string } 
 function candidateScore(record: MemoryRecord, terms: string[], context: MemoryCandidateContext): number {
   const layerBoost = record.layer === 'principle' ? 9 : record.layer === 'pattern' ? 6 : 2;
   const tagScore = (context.tags ?? []).filter(tag => record.tags.includes(tag)).length * 2;
-  return layerBoost + lexicalScore(record, terms) + tagScore + recordPriority(record);
+  return layerBoost + lexicalScore(record, terms) + tagScore + heatBoost(record) + recordPriority(record);
 }
 
 function recordPriority(record: MemoryRecord): number {
@@ -364,11 +415,31 @@ function lexicalScore(record: MemoryRecord, terms: string[]): number {
 }
 
 function formatCandidate(record: MemoryRecord): string {
+  if (record.kind === 'trace' || record.impact) {
+    return [
+      `- id=${record.id} layer=${record.layer} kind=${record.kind} heat=${record.heat ?? 'warm'} confidence=${record.confidence.toFixed(2)} status=${record.status}`,
+      `  impact=${(record.impact ?? record.summary).replace(/\s+/g, ' ')}`,
+      record.event ? `  event=${record.event.replace(/\s+/g, ' ')}` : undefined,
+      record.feltSense ? `  felt_sense=${record.feltSense.replace(/\s+/g, ' ')}` : undefined,
+      record.whyItMatters ? `  why_it_matters=${record.whyItMatters.replace(/\s+/g, ' ')}` : undefined,
+      `  provenance=${JSON.stringify(record.provenance)}`,
+    ].filter((line): line is string => Boolean(line)).join('\n');
+  }
   return [
     `- id=${record.id} layer=${record.layer} kind=${record.kind} confidence=${record.confidence.toFixed(2)} status=${record.status}`,
     `  summary=${record.summary.replace(/\s+/g, ' ')}`,
     `  provenance=${JSON.stringify(record.provenance)}`,
   ].join('\n');
+}
+
+function formatTraceText(input: MemoryTraceInput, heat: MemoryHeat): string {
+  return [
+    `Impact: ${input.impact}`,
+    `Heat: ${heat}`,
+    input.feltSense ? `Felt sense: ${input.feltSense}` : undefined,
+    input.whyItMatters ? `Why it matters: ${input.whyItMatters}` : undefined,
+    input.event ? `Event: ${input.event}` : undefined,
+  ].filter((line): line is string => Boolean(line)).join('\n');
 }
 
 function mergeProvenance(items: MemoryProvenance[]): MemoryProvenance {
@@ -385,6 +456,16 @@ function mergeProvenance(items: MemoryProvenance[]): MemoryProvenance {
 
 function duplicateKey(layer: MemoryLayer, kind: string, text: string): string {
   return createHash('sha256').update(`${layer}:${kind}:${normalize(text)}`).digest('hex').slice(0, 24);
+}
+
+function heatBoost(record: MemoryRecord): number {
+  if (record.heat === 'hot') {
+    return 3;
+  }
+  if (record.heat === 'warm') {
+    return 1.5;
+  }
+  return 0;
 }
 
 function normalize(text: string): string {
