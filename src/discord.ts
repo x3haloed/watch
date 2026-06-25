@@ -20,6 +20,8 @@ import type { DiscordConfig, DiscordPolicySnapshot, JsonObject } from './types.j
 
 type DiscordAttentionPolicy = {
   defaultDMs: boolean;
+  dmWhitelistMode: 'all' | 'users';
+  dmWhitelistedUsers: Set<string>;
   defaultMentions: boolean;
   defaultReplies: boolean;
   defaultReactions: boolean;
@@ -450,6 +452,7 @@ export class DiscordBridge {
     if (this.policy.mutedChannels.has(channelId)) return drop('muted channel');
     if (threadId && this.policy.mutedThreads.has(threadId)) return drop('muted thread');
     if (this.policy.mutedUsers.has(author.id)) return drop('muted user');
+    if (isDirectMessage(fullMessage) && !this.isAllowedDmAuthor(author.id)) return drop('dm author not whitelisted');
 
     const reason = this.acceptanceReason(fullMessage);
     if (!reason) return drop('outside discord attention');
@@ -615,6 +618,10 @@ export class DiscordBridge {
     return undefined;
   }
 
+  private isAllowedDmAuthor(authorId: string): boolean {
+    return this.policy.dmWhitelistMode === 'all' || this.policy.dmWhitelistedUsers.has(authorId);
+  }
+
   private isReplyToBot(message: Message): boolean {
     const referencedAuthorId = message.reference?.messageId
       ? message.mentions.repliedUser?.id
@@ -685,8 +692,11 @@ export function parseDiscordAttentionScope(kind: string, id?: string): Attention
 }
 
 function normalizePolicy(config?: DiscordConfig, persisted?: DiscordPolicySnapshot): DiscordAttentionPolicy {
+  const dmWhitelist = normalizeDmWhitelist(config, persisted);
   return {
     defaultDMs: persisted?.defaultDMs ?? (config?.defaultDMs !== false),
+    dmWhitelistMode: dmWhitelist.mode,
+    dmWhitelistedUsers: dmWhitelist.userIds,
     defaultMentions: persisted?.defaultMentions ?? (config?.defaultMentions !== false),
     defaultReplies: persisted?.defaultReplies ?? (config?.defaultReplies !== false),
     defaultReactions: persisted?.defaultReactions ?? (config?.defaultReactions !== false),
@@ -702,6 +712,10 @@ function normalizePolicy(config?: DiscordConfig, persisted?: DiscordPolicySnapsh
 function serializePolicy(policy: DiscordAttentionPolicy): DiscordPolicySnapshot {
   return {
     defaultDMs: policy.defaultDMs,
+    dmWhitelist: {
+      mode: policy.dmWhitelistMode,
+      userIds: [...policy.dmWhitelistedUsers].sort(),
+    },
     defaultMentions: policy.defaultMentions,
     defaultReplies: policy.defaultReplies,
     defaultReactions: policy.defaultReactions,
@@ -712,6 +726,15 @@ function serializePolicy(policy: DiscordAttentionPolicy): DiscordPolicySnapshot 
     watchedChannels: [...policy.watchedChannels].sort(),
     watchedThreads: [...policy.watchedThreads].sort(),
   };
+}
+
+function normalizeDmWhitelist(config?: DiscordConfig, persisted?: DiscordPolicySnapshot): { mode: 'all' | 'users'; userIds: Set<string> } {
+  const persistedWhitelist = persisted?.dmWhitelist;
+  const configWhitelist = config?.dmWhitelist;
+  const requestedMode = persistedWhitelist?.mode ?? configWhitelist?.mode;
+  const mode = requestedMode === 'users' ? 'users' : 'all';
+  const userIds = cleanStringSet(persistedWhitelist?.userIds ?? configWhitelist?.userIds);
+  return { mode, userIds };
 }
 
 function setMembership(set: Set<string>, id: string, enabled: boolean): void {

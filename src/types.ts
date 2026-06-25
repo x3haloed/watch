@@ -81,6 +81,7 @@ export type DiscordConfig = {
   enabled?: boolean;
   tokenEnv?: string;
   defaultDMs?: boolean;
+  dmWhitelist?: DiscordDmWhitelistConfig;
   defaultMentions?: boolean;
   defaultReplies?: boolean;
   defaultReactions?: boolean;
@@ -90,6 +91,11 @@ export type DiscordConfig = {
   mutedUsers?: string[];
   watchedChannels?: string[];
   watchedThreads?: string[];
+};
+
+export type DiscordDmWhitelistConfig = {
+  mode?: 'all' | 'users';
+  userIds?: string[];
 };
 
 export type MoltbookScopeType = 'home' | 'feed' | 'submolt' | 'user' | 'post' | 'search' | 'announcements';
@@ -179,6 +185,10 @@ export type StreamRegistrySnapshot = {
 
 export type DiscordPolicySnapshot = {
   defaultDMs: boolean;
+  dmWhitelist: {
+    mode: 'all' | 'users';
+    userIds: string[];
+  };
   defaultMentions: boolean;
   defaultReplies: boolean;
   defaultReactions: boolean;

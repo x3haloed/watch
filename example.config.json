@@ -94,6 +94,10 @@
   },
   "discord": {
     "enabled": true,
-    "tokenEnv": "DISCORD_BOT_TOKEN"
+    "tokenEnv": "DISCORD_BOT_TOKEN",
+    "dmWhitelist": {
+      "mode": "all",
+      "userIds": []
+    }
   }
 }
