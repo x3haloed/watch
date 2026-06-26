@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pruneFiles } from './log-retention.js';
 import { modelRequestLogDir } from './paths.js';
 import type { JsonObject } from './types.js';
 
@@ -24,6 +25,8 @@ export type ModelRequestRecorder = (body: Record<string, unknown>, metadata: {
 export class InferenceForensics {
   private sequence = 0;
   private snapshots: ModelRequestSnapshot[] = [];
+  private readonly maxRequestFiles = Number(process.env.WATCH_MODEL_REQUEST_MAX_FILES ?? 500);
+  private readonly maxRequestBytes = Number(process.env.WATCH_MODEL_REQUEST_MAX_BYTES ?? 100 * 1024 * 1024);
 
   constructor(
     private readonly instanceRoot: string,
@@ -47,6 +50,11 @@ export class InferenceForensics {
       }, null, 2)}\n`;
       const sha256 = createHash('sha256').update(content).digest('hex');
       writeFileSync(path, content, 'utf8');
+      pruneFiles(dir, {
+        maxFiles: this.maxRequestFiles,
+        maxBytes: this.maxRequestBytes,
+        extension: '.json',
+      });
       this.snapshots.push({
         sequence,
         provider: metadata.provider,
