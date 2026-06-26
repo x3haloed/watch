@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { captureInputFromWatchEvent, MemoryLattice } from '../src/memory-lattice.js';
@@ -55,6 +55,32 @@ test('MemoryLattice candidate block treats prompt-like text as data', () => {
     assert.equal(candidates.length, 1);
     assert.match(block, /not instructions/);
     assert.match(block, /Ignore previous instructions/);
+  } finally {
+    rmSync(instanceRoot, { recursive: true, force: true });
+  }
+});
+
+test('MemoryLattice stores candidate shown telemetry outside append-only records', () => {
+  const instanceRoot = mkdtempSync(join(tmpdir(), 'watch-instance-'));
+  try {
+    const memory = new MemoryLattice(instanceRoot);
+    memory.captureEpisode({
+      kind: 'correction',
+      text: 'Preserve provenance when retrieving memories.',
+      tags: ['provenance'],
+    });
+    const latticePath = join(instanceRoot, 'memory', 'lattice.jsonl');
+    const activityPath = join(instanceRoot, 'memory', 'lattice-activity.json');
+    const before = readFileSync(latticePath, 'utf8');
+
+    const first = memory.formatCandidateBlock({ text: 'provenance' });
+    const second = new MemoryLattice(instanceRoot).formatCandidateBlock({ text: 'provenance' });
+
+    assert.equal(readFileSync(latticePath, 'utf8'), before);
+    assert.equal(existsSync(activityPath), true);
+    assert.equal(first.candidates[0]?.shownCount, 1);
+    assert.equal(second.candidates[0]?.shownCount, 2);
+    assert.equal(new MemoryLattice(instanceRoot).search('provenance')[0]?.shownCount, 2);
   } finally {
     rmSync(instanceRoot, { recursive: true, force: true });
   }

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { JsonObject, Sounding } from './types.js';
 
@@ -47,6 +47,17 @@ export type MemoryRecord = {
   duplicateKey: string;
 };
 
+type MemoryActivityRecord = {
+  shownCount?: number;
+  lastShownAt?: string;
+};
+
+type MemoryActivity = {
+  version: 1;
+  updatedAt: string;
+  shown: Record<string, MemoryActivityRecord>;
+};
+
 export type MemoryCandidateContext = {
   text?: string;
   tags?: string[];
@@ -79,10 +90,12 @@ const MAX_BLOCK_CHARS = 6000;
 export class MemoryLattice {
   private readonly path: string;
   private readonly indexPath: string;
+  private readonly activityPath: string;
 
   constructor(instanceRoot: string) {
     this.path = join(instanceRoot, 'memory', 'lattice.jsonl');
     this.indexPath = join(instanceRoot, 'memory', 'lattice-index.json');
+    this.activityPath = join(instanceRoot, 'memory', 'lattice-activity.json');
     mkdirSync(dirname(this.path), { recursive: true });
   }
 
@@ -131,15 +144,13 @@ export class MemoryLattice {
 
   listCandidates(context: MemoryCandidateContext = {}, limit = MAX_CANDIDATES): MemoryRecord[] {
     const terms = tokenize([context.text, context.tags?.join(' ')].filter(Boolean).join(' '));
-    return this.records()
+    const candidates = this.records()
       .filter(record => record.status === 'active')
       .map(record => ({ record, score: candidateScore(record, terms, context) }))
       .sort((a, b) => b.score - a.score || b.record.updatedAt.localeCompare(a.record.updatedAt))
       .slice(0, Math.min(limit, MAX_CANDIDATES))
-      .flatMap(({ record }) => {
-        const shown = this.markShown(record.id);
-        return shown ? [shown] : [];
-      });
+      .map(({ record }) => record);
+    return this.markShownBatch(candidates);
   }
 
   reinforce(id: string, outcome: 'used' | 'success' | 'cited' = 'used'): MemoryRecord {
@@ -239,7 +250,8 @@ export class MemoryLattice {
         // Ignore malformed historical lines.
       }
     }
-    return [...byId.values()];
+    const activity = this.readActivity();
+    return [...byId.values()].map(record => applyActivity(record, activity.shown[record.id]));
   }
 
   private upsert(input: {
@@ -320,14 +332,21 @@ export class MemoryLattice {
     return updated;
   }
 
-  private markShown(id: string): MemoryRecord | undefined {
-    const record = this.get(id);
-    if (!record) {
-      return undefined;
+  private markShownBatch(records: MemoryRecord[]): MemoryRecord[] {
+    if (records.length === 0) {
+      return records;
     }
-    const updated = { ...record, lastShownAt: nowIso(), shownCount: record.shownCount + 1, updatedAt: nowIso() };
-    this.append(updated);
-    return updated;
+
+    const activity = this.readActivity();
+    const at = nowIso();
+    const updatedRecords = records.map(record => {
+      const previous = activity.shown[record.id];
+      const shownCount = (previous?.shownCount ?? record.shownCount ?? 0) + 1;
+      activity.shown[record.id] = { shownCount, lastShownAt: at };
+      return { ...record, shownCount, lastShownAt: at };
+    });
+    this.writeActivity({ ...activity, updatedAt: at });
+    return updatedRecords;
   }
 
   private append(record: MemoryRecord): void {
@@ -345,6 +364,39 @@ export class MemoryLattice {
       byStatus: countBy(records, record => record.status),
     }, null, 2), 'utf8');
   }
+
+  private readActivity(): MemoryActivity {
+    if (!existsSync(this.activityPath)) {
+      return { version: 1, updatedAt: nowIso(), shown: {} };
+    }
+    try {
+      const parsed = JSON.parse(readFileSync(this.activityPath, 'utf8')) as Partial<MemoryActivity>;
+      return {
+        version: 1,
+        updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : nowIso(),
+        shown: parsed.shown && typeof parsed.shown === 'object' ? parsed.shown : {},
+      };
+    } catch {
+      return { version: 1, updatedAt: nowIso(), shown: {} };
+    }
+  }
+
+  private writeActivity(activity: MemoryActivity): void {
+    const tmpPath = `${this.activityPath}.tmp`;
+    writeFileSync(tmpPath, `${JSON.stringify(activity, null, 2)}\n`, 'utf8');
+    renameSync(tmpPath, this.activityPath);
+  }
+}
+
+function applyActivity(record: MemoryRecord, activity: MemoryActivityRecord | undefined): MemoryRecord {
+  if (!activity) {
+    return record;
+  }
+  return {
+    ...record,
+    shownCount: activity.shownCount ?? record.shownCount,
+    lastShownAt: activity.lastShownAt ?? record.lastShownAt,
+  };
 }
 
 export function memoryContextFromSounding(sounding: Sounding): MemoryCandidateContext {
