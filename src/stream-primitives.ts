@@ -358,7 +358,11 @@ function shouldPreviewInboxDelta(message: StoredMessage): boolean {
     return false;
   }
   const reason = discord.reason;
-  return reason === 'dm' || reason === 'mention' || reason === 'reply';
+  return reason === 'dm'
+    || reason === 'mention'
+    || reason === 'reply'
+    || reason === 'watched_channel'
+    || reason === 'watched_thread';
 }
 
 function truncatePreview(content: string): string | undefined {
