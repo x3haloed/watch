@@ -1,6 +1,6 @@
 import { ToolLoopAgent, stepCountIs } from 'ai';
 import type { ModelMessage } from 'ai';
-import type { ResolvedModel, Sounding } from './types.js';
+import type { ResolvedModel, Sounding, StreamDelta } from './types.js';
 import { StreamRegistry } from './streams.js';
 import { EventLog } from './event-log.js';
 import { ModelRegistry } from './model-registry.js';
@@ -136,7 +136,7 @@ export class Lookout {
 
   async receive(
     sounding: Sounding,
-    options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice; restModelBlockedNotice?: RestModelBlockedNotice } = {},
+    options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice; restModelBlockedNotice?: RestModelBlockedNotice; hasSteeringPending?: () => boolean; takeSteeringDeltas?: () => StreamDelta[] } = {},
   ): Promise<{ text: string; toolCallCount: number }> {
     const missingKey = requiredApiKeyEnv(sounding.model);
     if (this.noModel || missingKey) {
@@ -156,7 +156,7 @@ export class Lookout {
   private async runOnce(
     sounding: Sounding,
     model: ResolvedModel,
-    options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice; restModelBlockedNotice?: RestModelBlockedNotice } = {},
+    options: { abortSignal?: AbortSignal; timeoutMs?: number; restModelNotice?: RestModelNotice; restModelBlockedNotice?: RestModelBlockedNotice; hasSteeringPending?: () => boolean; takeSteeringDeltas?: () => StreamDelta[] } = {},
   ): Promise<{ text: string; toolCallCount: number }> {
     let activeTurnModel = model;
     let currentStepModel = model;
@@ -196,7 +196,7 @@ export class Lookout {
         tools: this.createTools(sounding, () => activeTurnModel, nextModel => {
           activeTurnModel = nextModel;
         }),
-        stopWhen: stepCountIs(20),
+        stopWhen: [stepCountIs(20), () => options.hasSteeringPending?.() === true],
         maxOutputTokens: maxOutputTokensForModel(model),
         experimental_repairToolCall: repairFlatToolCall,
         prepareStep: ({ messages }) => {
@@ -229,16 +229,21 @@ export class Lookout {
         },
       });
 
-      const result = await agent.generate({
-        messages: messagesForModel(model, this.messages),
-        abortSignal: options.abortSignal,
-      });
-
-      if (!this.session.consumeCurlDuringTurn()) {
-        this.messages.push(...sanitizeMessagesForHistory(result.response.messages));
-        this.repairMessageHistory();
+      while (true) {
+        const result = await agent.generate({
+          messages: messagesForModel(activeTurnModel, this.messages),
+          abortSignal: options.abortSignal,
+        });
+        if (!this.session.consumeCurlDuringTurn()) {
+          this.messages.push(...sanitizeMessagesForHistory(result.response.messages));
+          this.repairMessageHistory();
+        }
+        checkpointMessages.length = 0;
+        const steering = options.takeSteeringDeltas?.() ?? [];
+        if (!steering.length) return { text: result.text, toolCallCount };
+        this.messages.push({ role: 'user', content: formatLiveSteering(steering) });
+        this.log.append({ type: 'sounding_steered', at: new Date().toISOString(), soundingId: sounding.id, deltas: steering });
       }
-      return { text: result.text, toolCallCount };
     } catch (error) {
       this.session.consumeCurlDuringTurn();
       const classification = classifyInferenceError(error);
@@ -339,4 +344,8 @@ export class Lookout {
   private async openMediaForModel(input: OpenMediaInput, model: ResolvedModel): Promise<Record<string, unknown>> {
     return this.media.openForModel(input, model);
   }
+}
+
+function formatLiveSteering(deltas: StreamDelta[]): string {
+  return `[live_steering]\nThese waking deltas arrived while this Sounding was active. Incorporate them into the current turn without repeating completed work.\n[/live_steering]\n\n[stream_deltas]\n${deltas.map(delta => JSON.stringify(delta)).join('\n')}\n[/stream_deltas]`;
 }

@@ -31,6 +31,21 @@ test('subscribes buffered streams and pops pending deltas', async () => {
   assert.equal(registry.hasPending(new Date('2026-06-07T00:00:01.000Z')), true);
 });
 
+test('pops only waking deltas for live steering', async () => {
+  const streams = new StreamRegistry([], process.cwd());
+  streams.registerBufferedStream('waking', { waking: true });
+  streams.registerBufferedStream('ambient', { waking: false });
+  streams.push('waking', { value: 1 });
+  streams.push('ambient', { value: 2 });
+  const capabilities = { tools: true, text: true, images: false, audio: false, video: false, pdf: false, source: 'test' };
+
+  const waking = await streams.popWakingDeltas({ now: new Date(), capabilities });
+  assert.deepEqual(waking.map(delta => delta.stream), ['waking']);
+  assert.equal(streams.hasPending(), true);
+  const remaining = await streams.popDeltas({ now: new Date(), capabilities });
+  assert.equal(remaining.some(delta => delta.stream === 'ambient'), true);
+});
+
 test('desktop capture uses video-style delivery labels', async () => {
   const registry = new StreamRegistry([], process.cwd());
   registry.registerBufferedStream('desktop:capture', { subscribed: true });

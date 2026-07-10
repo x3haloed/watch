@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ControlRequest, ControlResponse, JsonObject, Sounding, WatchConfig, WatchEvent } from './types.js';
+import type { ControlRequest, ControlResponse, JsonObject, Sounding, StreamDelta, WatchConfig, WatchEvent } from './types.js';
 import { EventLog } from './event-log.js';
 import { Lookout, type RestModelBlockedNotice, type RestModelNotice } from './lookout.js';
 import { StreamRegistry } from './streams.js';
@@ -46,6 +46,8 @@ export class WatchRuntime {
   private pendingRestModelNotice: RestModelNotice | undefined;
   private pendingRestModelBlockedNotice: RestModelBlockedNotice | undefined;
   private capturingEvent = false;
+  private readonly pendingSteeringDeltas: StreamDelta[] = [];
+  private collectingSteering = false;
   private toolActivityUntil = 0;
   private toolActivityTimer: NodeJS.Timeout | undefined;
 
@@ -293,6 +295,11 @@ export class WatchRuntime {
       return;
     }
 
+    if (this.soundingActive) {
+      await this.collectWakingSteering();
+      return;
+    }
+
     const now = Date.now();
     if (now < this.modelBackoffUntil) {
       return;
@@ -337,7 +344,11 @@ export class WatchRuntime {
 
         const model = await this.models.getActive();
         const availability = this.config.noModel ? { ok: true as const } : await this.models.checkAvailable(model);
-        const deltas = await this.streams.popDeltas({ now: popAt, capabilities: model.capabilities });
+        const carriedSteering = this.pendingSteeringDeltas.splice(0);
+        const deltas = [
+          ...carriedSteering,
+          ...await this.streams.popDeltas({ now: popAt, capabilities: model.capabilities }),
+        ];
         for (const delta of deltas) {
           this.log.append({ type: 'stream_delta', at: new Date().toISOString(), delta });
         }
@@ -392,6 +403,8 @@ export class WatchRuntime {
             timeoutMs: this.config.modelTimeoutMs,
             restModelNotice,
             restModelBlockedNotice,
+            hasSteeringPending: () => this.pendingSteeringDeltas.length > 0,
+            takeSteeringDeltas: () => this.pendingSteeringDeltas.splice(0),
           });
           await this.recordToolActivity(result.toolCallCount);
           this.clearModelFailureBackoff();
@@ -443,7 +456,7 @@ export class WatchRuntime {
           this.desktopCaptureBridge?.startSegment();
         }
 
-        if (this.running && Date.now() >= this.modelBackoffUntil && (this.soundQueued || this.streams.hasWakingPending())) {
+        if (this.running && Date.now() >= this.modelBackoffUntil && (this.soundQueued || this.pendingSteeringDeltas.length > 0 || this.streams.hasWakingPending())) {
           nextTrigger = this.queuedTrigger;
           this.queuedTrigger = 'delta';
         }
@@ -452,6 +465,20 @@ export class WatchRuntime {
       this.soundingActive = false;
       this.currentSounding = undefined;
       this.syncPresence();
+    }
+  }
+
+  private async collectWakingSteering(): Promise<void> {
+    if (this.collectingSteering) return;
+    this.collectingSteering = true;
+    try {
+      const model = await this.models.getActive();
+      const deltas = await this.streams.popWakingDeltas({ now: new Date(), capabilities: model.capabilities });
+      if (!deltas.length) return;
+      this.pendingSteeringDeltas.push(...deltas);
+      for (const delta of deltas) this.log.append({ type: 'stream_delta', at: new Date().toISOString(), delta });
+    } finally {
+      this.collectingSteering = false;
     }
   }
 

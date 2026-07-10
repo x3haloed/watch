@@ -448,9 +448,17 @@ export class StreamRegistry {
   }
 
   async popDeltas(context: StreamPopContext): Promise<StreamDelta[]> {
+    return this.popMatchingDeltas(context, () => true);
+  }
+
+  async popWakingDeltas(context: StreamPopContext): Promise<StreamDelta[]> {
+    return this.popMatchingDeltas(context, stream => stream.waking);
+  }
+
+  private async popMatchingDeltas(context: StreamPopContext, matches: (stream: WatchStream) => boolean): Promise<StreamDelta[]> {
     const deltas: StreamDelta[] = [];
     for (const stream of this.streams.values()) {
-      if (!this.isSubscribed(stream.name)) {
+      if (!this.isSubscribed(stream.name) || !matches(stream)) {
         continue;
       }
       if (!stream.sampled && !stream.hasDelta(context.now)) {

@@ -264,6 +264,7 @@ export type WatchEvent =
   | { type: 'sounding_started'; at: string; sounding: Sounding }
   | { type: 'sounding_finished'; at: string; soundingId: string; modelId: string; text: string }
   | { type: 'sounding_failed'; at: string; soundingId: string; modelId: string; error: JsonObject; classification?: JsonObject }
+  | { type: 'sounding_steered'; at: string; soundingId: string; deltas: StreamDelta[] }
   | { type: 'model_step_finished'; at: string; soundingId: string; modelId: string; step: JsonObject }
   | { type: 'model_finished'; at: string; soundingId: string; modelId: string; result: JsonObject }
   | { type: 'model_error'; at: string; soundingId: string; modelId: string; error: JsonObject; classification?: JsonObject; request?: JsonObject; requests?: JsonObject[] }
