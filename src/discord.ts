@@ -1,5 +1,6 @@
 import {
   ChannelType,
+  ActivityType,
   Client,
   Events,
   GatewayIntentBits,
@@ -8,6 +9,7 @@ import {
   type MessageReaction,
   type PartialMessageReaction,
   type PartialUser,
+  type PresenceData,
   type TextBasedChannel,
   type User,
 } from 'discord.js';
@@ -17,6 +19,7 @@ import { StreamRegistry } from './streams.js';
 import { compactJsonObject } from './stream-primitives.js';
 import { mediaTypeFromFilename, modalityFromMediaType } from './media.js';
 import type { DiscordConfig, DiscordPolicySnapshot, JsonObject } from './types.js';
+import type { ResidentPresence } from './presence.js';
 
 type DiscordAttentionPolicy = {
   defaultDMs: boolean;
@@ -49,6 +52,24 @@ type MessageReadableDiscordChannel = TextBasedChannel & {
 
 const DISCORD_REACTIONS_STREAM = 'discord:reactions';
 
+export function discordPresenceEnabled(config: DiscordConfig | undefined): boolean {
+  return config?.presenceEnabled !== false;
+}
+
+export function discordPresencePayload(presence: ResidentPresence): PresenceData {
+  const status = presence.state === 'ready'
+    ? 'online'
+    : presence.state === 'queued'
+      ? 'idle'
+      : presence.state === 'offline'
+        ? 'invisible'
+        : 'dnd';
+  return {
+    status,
+    activities: [{ name: 'Resident status', type: ActivityType.Custom, state: presence.label }],
+  };
+}
+
 export type DiscordContextReadInput = {
   inboxMessageId?: number;
   channelId?: string;
@@ -78,6 +99,8 @@ export class DiscordBridge {
   private readonly policy: DiscordAttentionPolicy;
   private botUserId: string | undefined;
   private started = false;
+  private desiredPresence: ResidentPresence | undefined;
+  private appliedPresenceKey: string | undefined;
 
   constructor(
     private readonly config: DiscordConfig | undefined,
@@ -125,12 +148,14 @@ export class DiscordBridge {
     this.started = true;
     this.client.once(Events.ClientReady, readyClient => {
       this.botUserId = readyClient.user.id;
+      this.appliedPresenceKey = undefined;
       this.log.append({
         type: 'discord_started',
         at: new Date().toISOString(),
         userId: readyClient.user.id,
         username: readyClient.user.tag,
       });
+      this.applyPresence();
     });
     this.client.on(Events.MessageCreate, message => void this.handleMessage(message));
     this.client.on(Events.MessageReactionAdd, (reaction, user) => void this.handleReactionAdd(reaction, user));
@@ -149,6 +174,7 @@ export class DiscordBridge {
       return;
     }
     this.started = false;
+    this.appliedPresenceKey = undefined;
     this.client.removeAllListeners();
     this.client.destroy();
     this.log.append({ type: 'discord_stopped', at: new Date().toISOString(), reason });
@@ -157,10 +183,32 @@ export class DiscordBridge {
   getAttention(): Record<string, unknown> {
     return {
       enabled: this.isEnabled(),
+      presenceEnabled: this.isPresenceEnabled(),
       connected: this.client.isReady(),
       botUserId: this.botUserId,
       policy: this.snapshotPolicy(),
     };
+  }
+
+  isPresenceEnabled(): boolean {
+    return discordPresenceEnabled(this.config);
+  }
+
+  updatePresence(presence: ResidentPresence): void {
+    if (!this.isPresenceEnabled()) return;
+    this.desiredPresence = presence;
+    this.applyPresence();
+  }
+
+  private applyPresence(): void {
+    if (!this.isPresenceEnabled()) return;
+    const presence = this.desiredPresence;
+    if (!presence || !this.client.user || !this.client.isReady()) return;
+    const key = `${presence.state}:${presence.label}`;
+    if (key === this.appliedPresenceKey) return;
+    this.client.user.setPresence(discordPresencePayload(presence));
+    this.appliedPresenceKey = key;
+    this.log.append({ type: 'discord_presence_changed', at: new Date().toISOString(), presence: presence as unknown as JsonObject });
   }
 
   snapshotPolicy(): DiscordPolicySnapshot {

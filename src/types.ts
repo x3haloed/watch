@@ -79,6 +79,7 @@ export type DesktopCaptureConfig = {
 
 export type DiscordConfig = {
   enabled?: boolean;
+  presenceEnabled?: boolean;
   tokenEnv?: string;
   defaultDMs?: boolean;
   dmWhitelist?: DiscordDmWhitelistConfig;
@@ -289,6 +290,7 @@ export type WatchEvent =
   | { type: 'discord_outbound'; at: string; soundingId: string; replyToId?: number | string; channelId?: string; messageIds: string[] }
   | { type: 'discord_dropped'; at: string; messageId?: string; channelId?: string; authorId?: string; reason: string }
   | { type: 'discord_attention_changed'; at: string; action: string; scope: JsonObject; policy: JsonObject }
+  | { type: 'discord_presence_changed'; at: string; presence: JsonObject }
   | { type: 'discord_error'; at: string; error: JsonObject }
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }
   | { type: 'curl'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number }

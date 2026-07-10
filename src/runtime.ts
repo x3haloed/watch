@@ -12,6 +12,7 @@ import { CameraStreamBridge, registerCameraStreams } from './camera-streams.js';
 import { DesktopCaptureBridge } from './stream-primitives.js';
 import { classifyInferenceError, type InferenceErrorClassification } from './lookout-helpers.js';
 import { captureInputFromWatchEvent, MemoryLattice } from './memory-lattice.js';
+import { deriveResidentPresence, isToolActivityEvent } from './presence.js';
 
 const MODEL_FAILURE_BACKOFF_BASE_MS = 30_000;
 const MODEL_FAILURE_BACKOFF_MAX_MS = 5 * 60_000;
@@ -45,6 +46,8 @@ export class WatchRuntime {
   private pendingRestModelNotice: RestModelNotice | undefined;
   private pendingRestModelBlockedNotice: RestModelBlockedNotice | undefined;
   private capturingEvent = false;
+  private toolActivityUntil = 0;
+  private toolActivityTimer: NodeJS.Timeout | undefined;
 
   constructor(private readonly config: WatchConfig, private readonly requestReboot: (source: 'tool' | 'control') => void = () => {}) {
     this.gazeStore = new GazeStore(config.instanceRoot);
@@ -83,6 +86,7 @@ export class WatchRuntime {
       this.gazeStore.discord,
       policy => this.gazeStore.updateDiscord(policy),
     );
+    this.log.subscribe(event => this.observePresenceEvent(event));
     this.moltbook = new MoltbookBridge(
       config.moltbook,
       this.streams,
@@ -120,6 +124,7 @@ export class WatchRuntime {
       return;
     }
     this.running = true;
+    this.syncPresence();
     this.log.append({ type: 'daemon_started', at: new Date().toISOString(), pid: process.pid, config: this.config });
     void this.discord.start();
     this.moltbook.start();
@@ -135,6 +140,10 @@ export class WatchRuntime {
 
   async stop(reason = 'control request'): Promise<void> {
     this.running = false;
+    if (this.toolActivityTimer) clearTimeout(this.toolActivityTimer);
+    this.toolActivityTimer = undefined;
+    this.toolActivityUntil = 0;
+    this.syncPresence();
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.clockTimer) clearInterval(this.clockTimer);
     this.soundQueued = false;
@@ -182,6 +191,7 @@ export class WatchRuntime {
       noModel: this.config.noModel,
       soundingActive: this.soundingActive,
       soundQueued: this.soundQueued,
+      presence: this.currentPresence(),
       currentSounding: this.currentSounding,
       modelFailureCount: this.modelFailureCount,
       modelBackoffUntil: this.modelBackoffUntil > Date.now() ? new Date(this.modelBackoffUntil).toISOString() : undefined,
@@ -298,6 +308,7 @@ export class WatchRuntime {
   private async sound(trigger: Sounding['trigger']): Promise<void> {
     if (this.soundingActive) {
       this.soundQueued = true;
+      this.syncPresence();
       this.queuedTrigger = this.queuedTrigger === 'heartbeat' || trigger === 'heartbeat' ? 'heartbeat' : trigger;
       return;
     }
@@ -308,6 +319,7 @@ export class WatchRuntime {
     }
 
     this.soundingActive = true;
+    this.syncPresence();
     let nextTrigger: Sounding['trigger'] | undefined = trigger;
 
     try {
@@ -316,6 +328,7 @@ export class WatchRuntime {
           break;
         }
         this.soundQueued = false;
+        this.syncPresence();
         const activeTrigger = nextTrigger;
         nextTrigger = undefined;
         const now = Date.now();
@@ -438,6 +451,7 @@ export class WatchRuntime {
     } finally {
       this.soundingActive = false;
       this.currentSounding = undefined;
+      this.syncPresence();
     }
   }
 
@@ -451,6 +465,7 @@ export class WatchRuntime {
         );
     this.modelBackoffUntil = Date.now() + delayMs;
     this.soundQueued = false;
+    this.syncPresence();
     this.queuedTrigger = 'delta';
     this.log.append({
       type: 'model_failure_backoff',
@@ -603,7 +618,31 @@ export class WatchRuntime {
   private initiateReboot(source: 'tool' | 'control'): void {
     this.running = false;
     this.soundQueued = false;
+    this.syncPresence();
     this.requestReboot(source);
+  }
+
+  private currentPresence() {
+    return deriveResidentPresence(
+      { running: this.running, soundingActive: this.soundingActive, soundQueued: this.soundQueued },
+      Date.now() < this.toolActivityUntil,
+    );
+  }
+
+  private syncPresence(): void {
+    this.discord.updatePresence(this.currentPresence());
+  }
+
+  private observePresenceEvent(event: WatchEvent): void {
+    if (!this.soundingActive || !isToolActivityEvent(event)) return;
+    this.toolActivityUntil = Date.now() + 3_500;
+    if (this.toolActivityTimer) clearTimeout(this.toolActivityTimer);
+    this.toolActivityTimer = setTimeout(() => {
+      this.toolActivityTimer = undefined;
+      this.toolActivityUntil = 0;
+      this.syncPresence();
+    }, 3_500);
+    this.syncPresence();
   }
 
   private captureEventEpisode(event: WatchEvent): void {

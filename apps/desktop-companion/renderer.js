@@ -249,22 +249,14 @@ function renderRuntimeStatus() {
     setStatus("Connecting", "pending");
     return;
   }
-  if (!currentRuntimeStatus.running) {
-    setStatus("Offline", "error");
+  const presence = currentRuntimeStatus.presence;
+  if (presence?.label && presence?.tone) {
+    setStatus(presence.label, presence.tone);
     return;
   }
-  if (currentRuntimeStatus.soundingActive) {
-    if (currentRuntimeStatus.currentSounding?.digestion) {
-      setStatus("Digesting", "digesting");
-      return;
-    }
-    setStatus("Thinking", "thinking");
-    return;
-  }
-  if (currentRuntimeStatus.soundQueued) {
-    setStatus("Queued", "pending");
-    return;
-  }
+  if (!currentRuntimeStatus.running) return setStatus("Offline", "error");
+  if (currentRuntimeStatus.soundingActive) return setStatus("Thinking", "thinking");
+  if (currentRuntimeStatus.soundQueued) return setStatus("Queued", "pending");
   setStatus("Ready", "ok");
 }
 
