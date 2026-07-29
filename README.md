@@ -62,7 +62,7 @@ Watch can expose a local synchronized game participant as native AI SDK tools:
 {
   "game": {
     "controlUrl": "http://127.0.0.1:38473",
-    "actionTimeoutMs": 45000
+    "actionTimeoutMs": 60000
   },
   "streams": [
     {
@@ -77,5 +77,9 @@ Watch can expose a local synchronized game participant as native AI SDK tools:
 ```
 
 This adds `game_state` and `frame_action`. The latter waits for the authoritative
-decision-frame barrier and presents a returned camera PNG as multimodal tool
-content when the participant has a graphical renderer.
+decision-frame barrier and presents a returned WebP as multimodal tool content
+when the participant has a graphical renderer. Its default `standard` camera
+tier is a horizontal 960×180 strip sampled near 25%, 60%, and 100% of the
+simulated interval. Set `cameraTier` to `inspection` for one final 960×540
+frame. Set `kind` to `hold` for authored braking whose returned `action_kind`
+remains distinct from the server-authored `timeout_brake` fallback.
