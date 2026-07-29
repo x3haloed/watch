@@ -19,6 +19,7 @@ import {
   type SoundingMediaPart,
 } from './lookout-helpers.js';
 import type { ContextTokenTracker } from './token-estimator.js';
+import type { SeedCrystalStore } from './seed-crystals.js';
 
 export class SoundingPromptBuilder {
   private disclosedContextThreshold = 0;
@@ -38,6 +39,7 @@ export class SoundingPromptBuilder {
       tokenTracker: ContextTokenTracker;
       scratchpad?: Scratchpad;
       memory?: MemoryLattice;
+      seedCrystals?: SeedCrystalStore;
     },
   ) {}
 
@@ -48,7 +50,7 @@ export class SoundingPromptBuilder {
       this.availableSkillsPrompt(),
     ]);
     const environment = `[environment]\ncwd: ${this.input.cwd}\nFilesystem tools accept relative paths from cwd and absolute paths. They reject parent traversal paths containing "..".\n[/environment]`;
-    return [LOOKOUT_INSTRUCTIONS, this.scratchpadGuidance(), environment, modelRoster, availableSkills, context, this.input.scratchpad?.agentPrompt()].filter(Boolean).join('\n\n');
+    return [LOOKOUT_INSTRUCTIONS, this.scratchpadGuidance(), environment, modelRoster, availableSkills, context, this.input.seedCrystals?.formatActiveBlock(), this.input.scratchpad?.agentPrompt()].filter(Boolean).join('\n\n');
   }
 
   formatSounding(input: {

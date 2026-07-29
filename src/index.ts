@@ -7,7 +7,7 @@ import { configPath, eventLogPath } from './paths.js';
 import { sendControl } from './client.js';
 import { runDaemon } from './server.js';
 import { runOperatorConsole } from './tui.js';
-import type { CameraStreamConfig, MoltbookConfig, PersistedStreamConfig, WatchConfig, WebApiStreamConfig, SseStreamConfig } from './types.js';
+import type { CameraStreamConfig, MoltbookConfig, PersistedStreamConfig, SeedCrystalPolicy, WatchConfig, WebApiStreamConfig, SseStreamConfig } from './types.js';
 import { resolveStreamConfigs } from './stream-config.js';
 
 dotenv.config();
@@ -29,6 +29,7 @@ type WatchConfigFile = {
   discord?: WatchConfig['discord'];
   desktopCapture?: WatchConfig['desktopCapture'];
   game?: WatchConfig['game'];
+  memory?: { seedCrystals?: Partial<SeedCrystalPolicy> };
 };
 
 async function main(): Promise<void> {
@@ -198,6 +199,26 @@ function defaultConfig(instanceRoot: string, cloneRoot: string, file: WatchConfi
       .map(model => model.trim())
       .filter(Boolean),
     noModel: args.includes('--no-model'),
+    memory: {
+      seedCrystals: normalizeSeedCrystalPolicy(file.memory?.seedCrystals),
+    },
+  };
+}
+
+function normalizeSeedCrystalPolicy(input: Partial<SeedCrystalPolicy> | undefined): SeedCrystalPolicy {
+  const bounded = (value: unknown, fallback: number, min: number, max: number) =>
+    typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max ? value : fallback;
+  return {
+    enabled: input?.enabled === true,
+    injectionEnabled: input?.injectionEnabled !== false,
+    commissioningEnabled: input?.commissioningEnabled !== false,
+    creationPolicy: input?.creationPolicy === 'allow_immediate_active' ? 'allow_immediate_active' : 'candidate_first',
+    promotionPolicy: input?.promotionPolicy === 'disabled' ? 'disabled' : 'judgment_only',
+    maxActiveBytes: bounded(input?.maxActiveBytes, 24_000, 1_024, 64_000),
+    activeCountWarning: bounded(input?.activeCountWarning, 8, 1, 1_000),
+    recoveryCliEnabled: input?.recoveryCliEnabled !== false,
+    omissionExperimentsEnabled: input?.omissionExperimentsEnabled === true,
+    presentFitEnabled: input?.presentFitEnabled !== false,
   };
 }
 

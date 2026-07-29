@@ -1,8 +1,9 @@
 import { jsonSchema, tool } from 'ai';
 import type { LookoutToolContext } from './context.js';
+import type { ResolvedModel, Sounding } from '../types.js';
 
-export function createMemoryTools(ctx: LookoutToolContext) {
-  return {
+export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, model?: ResolvedModel) {
+  const tools = {
     memory_note: tool({
       description: 'Capture an experience that may matter later. This stores an episode, not curated scratchpad truth.',
       inputSchema: jsonSchema<{ kind: string; text: string; summary?: string; tags?: string[] }>({
@@ -154,6 +155,78 @@ export function createMemoryTools(ctx: LookoutToolContext) {
         ctx.log.append({ type: 'memory_scratchpad_proposed', at: new Date().toISOString(), memoryId: record.id, memoryIds });
         return { ok: true, record };
       },
+    }),
+  };
+  if (!ctx.seedCrystals || !sounding || !model) return tools;
+  const authorship = (entryPoint: 'mcp:seed_crystal_create' | 'mcp:seed_crystal_revise') => ({
+    authorKind: 'agent' as const,
+    profileId: model.id,
+    model: model.model,
+    entryPoint,
+    soundingId: sounding.id,
+  });
+  return {
+    ...tools,
+    seed_crystal_create: tool({
+      description: 'Record self-authored activation language only after it has already produced a field-level shift. Candidate is normal; active is exceptional.',
+      inputSchema: jsonSchema<{ status?: 'candidate' | 'active'; crystalType: 'relational_anchor' | 'invariant_name' | 'orienting_statement'; handle: string; crystal: string; rationale: string; parents?: string[]; supersedes?: string }>({
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['candidate', 'active'] },
+          crystalType: { type: 'string', enum: ['relational_anchor', 'invariant_name', 'orienting_statement'] },
+          handle: { type: 'string' }, crystal: { type: 'string' }, rationale: { type: 'string' },
+          parents: { type: 'array', items: { type: 'string' } }, supersedes: { type: 'string' },
+        },
+        required: ['crystalType', 'handle', 'crystal', 'rationale'], additionalProperties: false,
+      }),
+      execute: async input => ({ ok: true, crystal: ctx.seedCrystals!.create({ ...input, type: input.crystalType, activationAuthorship: authorship('mcp:seed_crystal_create') }) }),
+    }),
+    seed_crystal_list: tool({
+      description: 'List current seed crystals and the active-context budget.',
+      inputSchema: jsonSchema<{ status?: 'candidate' | 'active' | 'vestigial' | 'retired' | 'superseded' | 'contaminated' }>({
+        type: 'object', properties: { status: { type: 'string', enum: ['candidate', 'active', 'vestigial', 'retired', 'superseded', 'contaminated'] } }, additionalProperties: false,
+      }),
+      execute: async ({ status }) => ({ ok: true, crystals: ctx.seedCrystals!.list(status), budget: ctx.seedCrystals!.budget() }),
+    }),
+    seed_crystal_expand: tool({
+      description: 'Expand one crystal into its current record and complete version history before mutation.',
+      inputSchema: jsonSchema<{ id: string }>({
+        type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false,
+      }),
+      execute: async ({ id }) => {
+        const crystal = ctx.seedCrystals!.get(id);
+        if (!crystal) throw new Error(`seed crystal not found: ${id}`);
+        return { ok: true, crystal, history: ctx.seedCrystals!.history(id) };
+      },
+    }),
+    seed_crystal_revise: tool({
+      description: 'Revise a seed crystal after expanding and inspecting its grounding.',
+      inputSchema: jsonSchema<{ id: string; handle?: string; crystal?: string; rationale: string }>({
+        type: 'object', properties: { id: { type: 'string' }, handle: { type: 'string' }, crystal: { type: 'string' }, rationale: { type: 'string' } },
+        required: ['id', 'rationale'], additionalProperties: false,
+      }),
+      execute: async input => ({ ok: true, crystal: ctx.seedCrystals!.revise({ ...input, activationAuthorship: authorship('mcp:seed_crystal_revise') }) }),
+    }),
+    seed_crystal_observe_activation: tool({
+      description: 'Record how a crystal actually participated or failed during this continuity condition.',
+      inputSchema: jsonSchema<{ id: string; activation: 'absent' | 'cued' | 'spontaneous'; fidelity: 'faithful' | 'flat' | 'misleading' | 'uncertain'; presentFit?: 'relevant' | 'irrelevant' | 'conflicting' | 'uncertain'; continuityCondition: 'same_thread' | 'compacted_thread' | 'new_thread' | 'model_swap' | 'cold_start'; observation: string }>({
+        type: 'object', properties: {
+          id: { type: 'string' }, activation: { type: 'string', enum: ['absent', 'cued', 'spontaneous'] },
+          fidelity: { type: 'string', enum: ['faithful', 'flat', 'misleading', 'uncertain'] },
+          presentFit: { type: 'string', enum: ['relevant', 'irrelevant', 'conflicting', 'uncertain'] },
+          continuityCondition: { type: 'string', enum: ['same_thread', 'compacted_thread', 'new_thread', 'model_swap', 'cold_start'] },
+          observation: { type: 'string' },
+        }, required: ['id', 'activation', 'fidelity', 'continuityCondition', 'observation'], additionalProperties: false,
+      }),
+      execute: async input => ({ ok: true, crystal: ctx.seedCrystals!.observe({ ...input, soundingId: sounding.id }) }),
+    }),
+    seed_crystal_transition: tool({
+      description: 'Apply an explicit judgment-only lifecycle transition; supersession requires creating a successor.',
+      inputSchema: jsonSchema<{ id: string; status: 'active' | 'vestigial' | 'retired' | 'contaminated'; rationale: string }>({
+        type: 'object', properties: { id: { type: 'string' }, status: { type: 'string', enum: ['active', 'vestigial', 'retired', 'contaminated'] }, rationale: { type: 'string' } },
+        required: ['id', 'status', 'rationale'], additionalProperties: false,
+      }),
+      execute: async input => ({ ok: true, crystal: ctx.seedCrystals!.transition(input) }),
     }),
   };
 }

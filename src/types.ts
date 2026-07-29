@@ -22,6 +22,22 @@ export type WatchConfig = {
   restAfterNoToolSoundings: number;
   estimatedTokenWarningThreshold: number;
   noModel: boolean;
+  memory?: {
+    seedCrystals: SeedCrystalPolicy;
+  };
+};
+
+export type SeedCrystalPolicy = {
+  enabled: boolean;
+  injectionEnabled: boolean;
+  commissioningEnabled: boolean;
+  creationPolicy: 'candidate_first' | 'allow_immediate_active';
+  promotionPolicy: 'judgment_only' | 'disabled';
+  maxActiveBytes: number;
+  activeCountWarning: number;
+  recoveryCliEnabled: boolean;
+  omissionExperimentsEnabled: boolean;
+  presentFitEnabled: boolean;
 };
 
 export type GameIntegrationConfig = {
@@ -355,6 +371,7 @@ export type WatchEvent =
   | { type: 'memory_contradicted'; at: string; memoryId: string; rationale: string }
   | { type: 'memory_stale'; at: string; memoryId: string; reason: string }
   | { type: 'memory_scratchpad_proposed'; at: string; memoryId: string; memoryIds: string[] }
+  | { type: 'seed_crystals_injected'; at: string; soundingId: string; crystalIds: string[]; omittedCrystalIds: string[]; bytes: number; estimatedTokens: number; condition: 'normal' | 'controlled_omission' | 'injection_disabled' }
   | { type: 'sse_stream_connected'; at: string; stream: string; url: string }
   | { type: 'sse_stream_disconnected'; at: string; stream: string; reason: string }
   | { type: 'sse_stream_error'; at: string; stream: string; error: string }

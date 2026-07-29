@@ -4,6 +4,20 @@
   "ledgerPath": "ledger.md",
   "restAfterNoToolSoundings": 3,
   "estimatedTokenWarningThreshold": 200000,
+  "memory": {
+    "seedCrystals": {
+      "enabled": false,
+      "injectionEnabled": true,
+      "commissioningEnabled": true,
+      "creationPolicy": "candidate_first",
+      "promotionPolicy": "judgment_only",
+      "maxActiveBytes": 24000,
+      "activeCountWarning": 8,
+      "recoveryCliEnabled": true,
+      "omissionExperimentsEnabled": false,
+      "presentFitEnabled": true
+    }
+  },
   "game": {
     "controlUrl": "http://127.0.0.1:38473",
     "actionTimeoutMs": 60000

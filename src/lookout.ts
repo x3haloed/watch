@@ -1,6 +1,8 @@
 import { ToolLoopAgent, stepCountIs } from 'ai';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ModelMessage } from 'ai';
-import type { ResolvedModel, Sounding, StreamDelta } from './types.js';
+import type { ResolvedModel, SeedCrystalPolicy, Sounding, StreamDelta } from './types.js';
 import { StreamRegistry } from './streams.js';
 import { EventLog } from './event-log.js';
 import { ModelRegistry } from './model-registry.js';
@@ -30,6 +32,8 @@ import { InferenceForensics } from './inference-forensics.js';
 import { createLookoutTools } from './lookout-tools.js';
 import { MediaService, type OpenMediaInput } from './media-service.js';
 import { MemoryLattice } from './memory-lattice.js';
+import { SeedCrystalStore } from './seed-crystals.js';
+import { readSeedCrystalControl } from './seed-crystal-control.js';
 import { SessionController, type CurlResult, type RebootRequest } from './session-controller.js';
 import { SoundingPromptBuilder } from './sounding-prompt.js';
 import type { LookoutToolContext, RerouteRequest } from './tools/context.js';
@@ -65,6 +69,7 @@ export class Lookout {
   private readonly media: MediaService;
   private readonly session: SessionController;
   private readonly memory: MemoryLattice;
+  private readonly seedCrystals?: SeedCrystalStore;
   private readonly tokenTracker = new ContextTokenTracker();
   private readonly cwd: string;
 
@@ -83,6 +88,7 @@ export class Lookout {
     private readonly scratchpad?: Scratchpad,
     redactedEnvNames: string[] = [],
     private readonly game?: { controlUrl: string; actionTimeoutMs?: number },
+    seedCrystalPolicy?: SeedCrystalPolicy,
   ) {
     this.cwd = instanceRoot;
     this.fileTools = new RepoFileTools(instanceRoot);
@@ -90,6 +96,14 @@ export class Lookout {
     this.terminalTools = new TerminalTools(instanceRoot, log, redactedEnvNames);
     this.media = new MediaService(this.fileTools, streams.inbox, models);
     this.memory = new MemoryLattice(instanceRoot);
+    const seedControl = readSeedCrystalControl(instanceRoot);
+    this.seedCrystals = seedCrystalPolicy?.enabled && seedCrystalPolicy.injectionEnabled && seedControl.injectionOverride !== false
+      ? new SeedCrystalStore(instanceRoot, reference => {
+          if (reference.kind === 'lattice') return this.memory.get(reference.id) ? { resolved: true } : { resolved: false, reason: 'lattice record not found' };
+          if (reference.kind === 'file') return existsSync(resolve(instanceRoot, reference.path)) ? { resolved: true } : { resolved: false, reason: 'file not found' };
+          return { resolved: false, reason: 'ledger evidence is not available in this harness' };
+        }, seedCrystalPolicy)
+      : undefined;
     this.prompt = new SoundingPromptBuilder({
       cwd: instanceRoot,
       contextPrompt: buildContextPrompt(instanceRoot),
@@ -103,6 +117,7 @@ export class Lookout {
       tokenTracker: this.tokenTracker,
       scratchpad,
       memory: this.memory,
+      seedCrystals: this.seedCrystals,
     });
     this.session = new SessionController({
       cwd: instanceRoot,
@@ -299,6 +314,7 @@ export class Lookout {
       moltbook: this.moltbook,
       scratchpad: this.scratchpad,
       memory: this.memory,
+      seedCrystals: this.seedCrystals,
       game: this.game,
       messages: this.messages,
       instructions: () => this.prompt.instructions(),

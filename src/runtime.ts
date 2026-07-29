@@ -103,6 +103,7 @@ export class WatchRuntime {
       this.scratchpad,
       [config.moltbook?.apiKeyEnv ?? 'MOLTBOOK_API_KEY'],
       config.game,
+      config.memory?.seedCrystals,
     );
   }
 

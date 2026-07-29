@@ -1,3 +1,16 @@
+## Seed crystals
+
+Watch can preserve scarce, agent-authored activation language across reentry. Enable it with
+`memory.seedCrystals.enabled` in the instance `config.json`. Crystals begin as candidates by
+default and move through explicit, judgment-only lifecycle transitions. Active crystals are
+injected into every model turn in a data-only safety envelope with authorship, evidence, and
+byte-budget validation.
+
+The model receives `seed_crystal_create`, `seed_crystal_list`, `seed_crystal_expand`, `seed_crystal_revise`,
+`seed_crystal_observe_activation`, and `seed_crystal_transition` alongside the existing memory
+tools. Facts, tasks, user instructions, and merely attractive summaries belong in ordinary
+memory rather than seed crystals.
+
 ## Instance Layout
 
 Watch now expects to run from inside a bare clone at `~/.watch/<name>/watch/`.
