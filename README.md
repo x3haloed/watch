@@ -46,3 +46,28 @@ Watch can subscribe to a local camera-daemon WebSocket stream and inject incomin
 ```
 
 The first integration target is motion-gated stills. The stream payload is the camera-daemon `camera_media_chunk` message, including `mediaType`, `dataBase64`, `sizeBytes`, and daemon metadata.
+
+## Synchronized Game Tools
+
+Watch can expose a local synchronized game participant as native AI SDK tools:
+
+```json
+{
+  "game": {
+    "controlUrl": "http://127.0.0.1:38473",
+    "actionTimeoutMs": 45000
+  },
+  "sseStreams": [
+    {
+      "name": "game:frame",
+      "url": "http://127.0.0.1:38473/stream",
+      "subscribed": true,
+      "waking": true
+    }
+  ]
+}
+```
+
+This adds `game_state` and `frame_action`. The latter waits for the authoritative
+decision-frame barrier and presents a returned camera PNG as multimodal tool
+content when the participant has a graphical renderer.

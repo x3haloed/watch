@@ -11,6 +11,7 @@ export type WatchConfig = {
   webApiStreams: WebApiStreamConfig[];
   sseStreams: SseStreamConfig[];
   cameraStreams: CameraStreamConfig[];
+  game?: GameIntegrationConfig;
   moltbook?: MoltbookConfig;
   desktopCapture?: DesktopCaptureConfig;
   ledgerPath?: string;
@@ -20,6 +21,11 @@ export type WatchConfig = {
   restAfterNoToolSoundings: number;
   estimatedTokenWarningThreshold: number;
   noModel: boolean;
+};
+
+export type GameIntegrationConfig = {
+  controlUrl: string;
+  actionTimeoutMs?: number;
 };
 
 export type ScratchpadConfig = {

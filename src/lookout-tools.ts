@@ -11,6 +11,7 @@ import { createSessionTools } from './tools/session.js';
 import { createSkillTools } from './tools/skills.js';
 import { createStreamTools } from './tools/streams.js';
 import { createTerminalTools } from './tools/terminal.js';
+import { createGameTools } from './tools/game.js';
 
 export function createLookoutTools(ctx: LookoutToolContext, sounding: Sounding, model: ResolvedModel): ToolSet {
   return {
@@ -24,5 +25,6 @@ export function createLookoutTools(ctx: LookoutToolContext, sounding: Sounding, 
     ...createDiscordTools(ctx),
     ...createStreamTools(ctx),
     ...createScratchpadTools(ctx),
+    ...createGameTools(ctx),
   };
 }

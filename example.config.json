@@ -4,6 +4,10 @@
   "ledgerPath": "ledger.md",
   "restAfterNoToolSoundings": 3,
   "estimatedTokenWarningThreshold": 200000,
+  "game": {
+    "controlUrl": "http://127.0.0.1:38473",
+    "actionTimeoutMs": 45000
+  },
   "scratchpad": {
     "enabled": true,
     "dir": "scratchpad",

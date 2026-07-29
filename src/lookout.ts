@@ -82,6 +82,7 @@ export class Lookout {
     private readonly moltbook?: MoltbookBridge,
     private readonly scratchpad?: Scratchpad,
     redactedEnvNames: string[] = [],
+    private readonly game?: { controlUrl: string; actionTimeoutMs?: number },
   ) {
     this.cwd = instanceRoot;
     this.fileTools = new RepoFileTools(instanceRoot);
@@ -298,6 +299,7 @@ export class Lookout {
       moltbook: this.moltbook,
       scratchpad: this.scratchpad,
       memory: this.memory,
+      game: this.game,
       messages: this.messages,
       instructions: () => this.prompt.instructions(),
       contextFitFor: model => this.contextFitFor(model),

@@ -26,6 +26,7 @@ type WatchConfigFile = {
   estimatedTokenWarningThreshold?: number;
   discord?: WatchConfig['discord'];
   desktopCapture?: WatchConfig['desktopCapture'];
+  game?: WatchConfig['game'];
 };
 
 async function main(): Promise<void> {
@@ -168,6 +169,10 @@ function defaultConfig(instanceRoot: string, cloneRoot: string, file: WatchConfi
     webApiStreams: Array.isArray(file.webApiStreams) ? file.webApiStreams : [],
     sseStreams: Array.isArray(file.sseStreams) ? file.sseStreams : [],
     cameraStreams: Array.isArray(file.cameraStreams) ? file.cameraStreams : [],
+    game: file.game?.controlUrl ? {
+      controlUrl: String(file.game.controlUrl).replace(/\/+$/, ''),
+      actionTimeoutMs: typeof file.game.actionTimeoutMs === 'number' ? file.game.actionTimeoutMs : undefined,
+    } : undefined,
     moltbook: file.moltbook,
     discord: file.discord,
     desktopCapture: file.desktopCapture ? {

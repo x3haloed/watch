@@ -36,6 +36,7 @@ export interface LookoutToolContext {
   moltbook?: MoltbookBridge;
   scratchpad?: Scratchpad;
   memory: MemoryLattice;
+  game?: { controlUrl: string; actionTimeoutMs?: number };
   messages: ModelMessage[];
   instructions: () => Promise<string>;
   contextFitFor: (model: ResolvedModel) => Promise<ContextFit>;

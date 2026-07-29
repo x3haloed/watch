@@ -114,6 +114,7 @@ export class WatchRuntime {
       this.moltbook,
       this.scratchpad,
       [config.moltbook?.apiKeyEnv ?? 'MOLTBOOK_API_KEY'],
+      config.game,
     );
   }
 
