@@ -185,6 +185,9 @@ export class MoltbookBridge {
     if (!this.isEnabled() || this.polling) {
       return;
     }
+    if (!force && !this.streams.isSubscribed(ACTIONABLE_STREAM) && !this.streams.isSubscribed(UPDATES_STREAM)) {
+      return;
+    }
     const now = Date.now();
     if (this.pollStatus.backoffUntil && Date.parse(this.pollStatus.backoffUntil) > now) {
       return;

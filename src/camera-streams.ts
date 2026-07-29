@@ -1,12 +1,11 @@
 import type { CameraStreamConfig, JsonObject } from './types.js';
 import { EventLog } from './event-log.js';
-import { StreamRegistry } from './streams.js';
+import type { StreamRegistry } from './streams.js';
 import { downsampleImage } from './stream-primitives.js';
 
 const DEFAULT_CAMERA_STREAM_FPS = 1;
 const DEFAULT_CAMERA_STREAM_MODE = 'stills';
 const DEFAULT_CAMERA_STREAM_URL = 'ws://127.0.0.1:8765/';
-const DEFAULT_MAX_BUFFERED_CHUNKS = 3;
 const RECONNECT_DELAY_MS = 3_000;
 
 export class CameraStreamBridge {
@@ -33,6 +32,11 @@ export class CameraStreamBridge {
     this.running = false;
     this.socket?.close(1000, reason);
     this.socket = undefined;
+  }
+
+  status(): 'stopped' | 'connecting' | 'connected' {
+    if (!this.running) return 'stopped';
+    return this.socket?.readyState === WebSocket.OPEN ? 'connected' : 'connecting';
   }
 
   private async connectLoop(): Promise<void> {
@@ -151,22 +155,6 @@ export class CameraStreamBridge {
       });
     });
   }
-}
-
-export function registerCameraStreams(configs: CameraStreamConfig[], streams: StreamRegistry, log: EventLog): CameraStreamBridge[] {
-  const bridges: CameraStreamBridge[] = [];
-  for (const config of configs) {
-    if (!config.name?.trim()) {
-      continue;
-    }
-    streams.registerBufferedStream(config.name, {
-      subscribed: config.subscribed,
-      waking: config.waking ?? true,
-      maxPayloads: config.maxBufferedChunks ?? DEFAULT_MAX_BUFFERED_CHUNKS,
-    });
-    bridges.push(new CameraStreamBridge(config, streams, log));
-  }
-  return bridges;
 }
 
 function cameraHandshake(config: CameraStreamConfig): JsonObject {

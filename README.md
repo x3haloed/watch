@@ -30,14 +30,15 @@ Watch can subscribe to a local camera-daemon WebSocket stream and inject incomin
 
 ```json
 {
-  "cameraStreams": [
+  "streams": [
     {
+      "kind": "camera",
       "name": "camera:motion",
       "url": "ws://127.0.0.1:8765/",
       "mode": "stills",
       "fps": 1,
       "motionGate": true,
-      "subscribed": true,
+      "active": true,
       "waking": true,
       "maxBufferedChunks": 3
     }
@@ -46,6 +47,12 @@ Watch can subscribe to a local camera-daemon WebSocket stream and inject incomin
 ```
 
 The first integration target is motion-gated stills. The stream payload is the camera-daemon `camera_media_chunk` message, including `mediaType`, `dataBase64`, `sizeBytes`, and daemon metadata.
+
+## Stream and gaze management
+
+All system, configured, integration-owned, buffered, and ephemeral media/file streams are visible through `stream_definition_list` and `gaze_list`. The Lookout can create or remove definitions with `stream_definition_set`/`stream_definition_remove`, and change active or waking gaze with `gaze_set`/`gaze_remove`.
+
+Every mutation requires `persistToConfig`. Runtime-only changes remain in the instance gaze state across daemon restarts. Persistent changes are atomically projected into the canonical `streams` array in `config.json`; legacy `webApiStreams`, `sseStreams`, `cameraStreams`, and `desktopCapture` fields are still accepted as migration input.
 
 ## Synchronized Game Tools
 
@@ -57,11 +64,12 @@ Watch can expose a local synchronized game participant as native AI SDK tools:
     "controlUrl": "http://127.0.0.1:38473",
     "actionTimeoutMs": 45000
   },
-  "sseStreams": [
+  "streams": [
     {
+      "kind": "sse",
       "name": "game:frame",
       "url": "http://127.0.0.1:38473/stream",
-      "subscribed": true,
+      "active": true,
       "waking": true
     }
   ]

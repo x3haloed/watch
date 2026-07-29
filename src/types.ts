@@ -11,6 +11,7 @@ export type WatchConfig = {
   webApiStreams: WebApiStreamConfig[];
   sseStreams: SseStreamConfig[];
   cameraStreams: CameraStreamConfig[];
+  streams?: PersistedStreamConfig[];
   game?: GameIntegrationConfig;
   moltbook?: MoltbookConfig;
   desktopCapture?: DesktopCaptureConfig;
@@ -43,6 +44,7 @@ export type SseStreamConfig = {
   headers?: Record<string, string>;
   waking?: boolean;
   subscribed?: boolean;
+  maxPayloads?: number;
 };
 
 export type WebApiStreamConfig = {
@@ -82,6 +84,44 @@ export type DesktopCaptureConfig = {
   subscribed?: boolean;
   maxBufferedChunks?: number;
 };
+
+export type BufferedStreamConfig = {
+  kind: 'buffered';
+  name: string;
+  active?: boolean;
+  waking?: boolean;
+  maxPayloads?: number;
+};
+
+export type CanonicalSseStreamConfig = Omit<SseStreamConfig, 'subscribed'> & {
+  kind: 'sse';
+  active?: boolean;
+  maxPayloads?: number;
+};
+
+export type CanonicalWebApiStreamConfig = Omit<WebApiStreamConfig, 'subscribed' | 'kind'> & {
+  kind: 'web_api';
+  active?: boolean;
+  format?: WebApiStreamConfig['kind'];
+};
+
+export type CanonicalCameraStreamConfig = Omit<CameraStreamConfig, 'subscribed'> & {
+  kind: 'camera';
+  active?: boolean;
+};
+
+export type CanonicalDesktopCaptureConfig = Omit<DesktopCaptureConfig, 'enabled' | 'name' | 'subscribed'> & {
+  kind: 'desktop_capture';
+  name: string;
+  active?: boolean;
+};
+
+export type PersistedStreamConfig =
+  | BufferedStreamConfig
+  | CanonicalSseStreamConfig
+  | CanonicalWebApiStreamConfig
+  | CanonicalCameraStreamConfig
+  | CanonicalDesktopCaptureConfig;
 
 export type DiscordConfig = {
   enabled?: boolean;
@@ -182,8 +222,12 @@ export type AudioVideoStreamSnapshot = {
 };
 
 export type StreamRegistrySnapshot = {
+  version?: 1 | 2;
   subscriptions: string[];
   knownStreams?: string[];
+  gazeOverrides?: Record<string, { active?: boolean; waking?: boolean }>;
+  runtimeDefinitions?: PersistedStreamConfig[];
+  removedConfigDefinitions?: string[];
   textStreams: TextStreamSnapshot[];
   videoStreams?: VideoStreamSnapshot[];
   audioStreams?: AudioStreamSnapshot[];

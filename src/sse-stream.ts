@@ -8,6 +8,7 @@ export class SseStream implements WatchStream {
   private buffer: JsonObject[] = [];
   private abortController: AbortController | null = null;
   private isConnected = false;
+  private readonly maxPayloads: number;
 
   constructor(
     readonly name: string,
@@ -15,7 +16,9 @@ export class SseStream implements WatchStream {
     private readonly log?: EventLog,
   ) {
     this.waking = config.waking !== false;
-    this.connect();
+    this.maxPayloads = typeof config.maxPayloads === 'number' && Number.isInteger(config.maxPayloads) && config.maxPayloads > 0
+      ? config.maxPayloads
+      : 100;
   }
 
   push(payload: JsonObject): void {
@@ -23,6 +26,7 @@ export class SseStream implements WatchStream {
       ...payload,
       receivedAt: new Date().toISOString(),
     });
+    if (this.buffer.length > this.maxPayloads) this.buffer = this.buffer.slice(-this.maxPayloads);
   }
 
   hasDelta(): boolean {
@@ -45,6 +49,15 @@ export class SseStream implements WatchStream {
         items,
       },
     };
+  }
+
+  start(): void {
+    this.connect();
+  }
+
+  status(): 'stopped' | 'connecting' | 'connected' {
+    if (!this.abortController) return 'stopped';
+    return this.isConnected ? 'connected' : 'connecting';
   }
 
   private connect(): void {
@@ -90,6 +103,7 @@ export class SseStream implements WatchStream {
           while (!signal.aborted) {
             const { value, done } = await reader.read();
             if (done) {
+              this.isConnected = false;
               if (this.log) {
                 this.log.append({
                   type: 'sse_stream_disconnected',

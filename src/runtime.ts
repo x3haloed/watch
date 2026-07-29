@@ -8,8 +8,7 @@ import { DiscordBridge } from './discord.js';
 import { MoltbookBridge } from './moltbook.js';
 import { GazeStore } from './gaze-state.js';
 import { Scratchpad } from './scratchpad.js';
-import { CameraStreamBridge, registerCameraStreams } from './camera-streams.js';
-import { DesktopCaptureBridge } from './stream-primitives.js';
+import { resolveStreamConfigs } from './stream-config.js';
 import { classifyInferenceError, type InferenceErrorClassification } from './lookout-helpers.js';
 import { captureInputFromWatchEvent, MemoryLattice } from './memory-lattice.js';
 import { deriveResidentPresence, isToolActivityEvent } from './presence.js';
@@ -27,8 +26,6 @@ export class WatchRuntime {
   private readonly gazeStore: GazeStore;
   private readonly scratchpad: Scratchpad | undefined;
   private readonly memory: MemoryLattice;
-  private readonly cameraStreams: CameraStreamBridge[];
-  private readonly desktopCaptureBridge: DesktopCaptureBridge | undefined;
   private lastSoundingAt = Date.now();
   private running = false;
   private tickTimer: NodeJS.Timeout | undefined;
@@ -57,8 +54,9 @@ export class WatchRuntime {
     this.log = new EventLog(config.instanceRoot);
     this.memory = new MemoryLattice(config.instanceRoot);
     this.log.subscribe(event => this.captureEventEpisode(event));
+    const streamDefinitions = config.streams ?? resolveStreamConfigs(config);
     this.streams = new StreamRegistry(
-      config.webApiStreams,
+      [],
       config.instanceRoot,
       this.gazeStore.streams,
       snapshot => this.gazeStore.updateStreams(snapshot),
@@ -66,20 +64,10 @@ export class WatchRuntime {
         ? undefined
         : { path: this.scratchpad.paths.userPath, maxChars: this.scratchpad.paths.userMaxChars },
       undefined,
-      config.sseStreams,
+      [],
       this.log,
+      streamDefinitions,
     );
-    this.cameraStreams = registerCameraStreams(config.cameraStreams, this.streams, this.log);
-    if (config.desktopCapture && config.desktopCapture.enabled !== false) {
-      this.streams.registerBufferedStream(config.desktopCapture.name || 'desktop:capture', {
-        subscribed: config.desktopCapture.subscribed ?? true,
-        waking: config.desktopCapture.waking ?? false,
-        maxPayloads: config.desktopCapture.maxBufferedChunks ?? 3,
-      });
-      this.desktopCaptureBridge = new DesktopCaptureBridge(config.desktopCapture, this.streams, this.log);
-    } else {
-      this.desktopCaptureBridge = undefined;
-    }
     this.models = ModelRegistry.load(config.instanceRoot, config.defaultModel, config.availableModels);
     this.discord = new DiscordBridge(
       config.discord,
@@ -131,12 +119,7 @@ export class WatchRuntime {
     this.log.append({ type: 'daemon_started', at: new Date().toISOString(), pid: process.pid, config: this.config });
     void this.discord.start();
     this.moltbook.start();
-    for (const bridge of this.cameraStreams) {
-      bridge.start();
-    }
-    if (this.desktopCaptureBridge) {
-      this.desktopCaptureBridge.start();
-    }
+    this.streams.start();
     this.clockTimer = setInterval(() => this.sampleClock(), 250);
     this.tickTimer = setInterval(() => void this.maybeSound(), 100);
   }
@@ -152,12 +135,7 @@ export class WatchRuntime {
     this.soundQueued = false;
     this.activeAbortController?.abort(reason);
     this.lookout.stopTerminalSessions(reason);
-    for (const bridge of this.cameraStreams) {
-      bridge.stop(reason);
-    }
-    if (this.desktopCaptureBridge) {
-      this.desktopCaptureBridge.stop();
-    }
+    this.streams.stop(reason);
     await this.discord.stop(reason);
     this.moltbook.stop();
     this.log.append({ type: 'daemon_stopped', at: new Date().toISOString(), pid: process.pid, reason });
@@ -183,6 +161,7 @@ export class WatchRuntime {
       availableModels: this.models.listModelIds(),
       activeModel: await this.models.getActive(),
       subscriptions: this.streams.listSubscriptions(),
+      streams: this.streams.list(),
       discord: this.discord.getAttention(),
       moltbook: this.moltbook.getAttention(),
       gazeState: this.gazeStore.snapshot(),
@@ -341,7 +320,7 @@ export class WatchRuntime {
         nextTrigger = undefined;
         const now = Date.now();
         const popAt = new Date(now);
-        await this.desktopCaptureBridge?.finishSegmentAndPush();
+        await this.streams.finishDesktopSegments();
 
         const model = await this.models.getActive();
         const availability = this.config.noModel ? { ok: true as const } : await this.models.checkAvailable(model);
@@ -390,7 +369,7 @@ export class WatchRuntime {
             modelId: model.id,
             error: { name: 'ModelUnavailable', message: availability.reason },
           });
-          this.desktopCaptureBridge?.startSegment();
+          this.streams.startDesktopSegments();
           this.beginModelFailureBackoff(model.id, availability.reason, sounding.id);
           break;
         }
@@ -454,7 +433,7 @@ export class WatchRuntime {
           this.beginModelFailureBackoff(this.lookout.modelId, errorMessage(error), sounding.id, classification);
         } finally {
           this.activeAbortController = undefined;
-          this.desktopCaptureBridge?.startSegment();
+          this.streams.startDesktopSegments();
         }
 
         if (this.running && Date.now() >= this.modelBackoffUntil && (this.soundQueued || this.pendingSteeringDeltas.length > 0 || this.streams.hasWakingPending())) {

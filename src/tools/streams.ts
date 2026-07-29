@@ -1,55 +1,114 @@
 import { jsonSchema, tool } from 'ai';
 import { mediaToolOutputToModelOutput } from '../lookout-helpers.js';
 import type { LookoutToolContext } from './context.js';
-import type { JsonObject } from '../types.js';
+import type { JsonObject, PersistedStreamConfig } from '../types.js';
 
 export function createStreamTools(ctx: LookoutToolContext) {
   return {
-    subscribe_stream: tool({
-      description: 'Begin watching a stream. Subscription changes persist across future Soundings.',
-      inputSchema: jsonSchema<{ stream: string }>({
+    stream_definition_list: tool({
+      description: 'List every defined stream kind with origin, capabilities, current gaze, connector state, and redacted connection metadata.',
+      inputSchema: jsonSchema<{ name?: string }>({
         type: 'object',
         properties: {
-          stream: { type: 'string', description: 'The stream name to subscribe to.' },
+          name: { type: 'string', description: 'Optional exact stream name filter.' },
         },
-        required: ['stream'],
         additionalProperties: false,
       }),
-      execute: async ({ stream }) => {
-        const changed = ctx.streams.subscribe(stream);
-        ctx.log.append({
-          type: 'subscription_changed',
-          at: new Date().toISOString(),
-          stream,
-          subscribed: true,
-        });
-        return { ok: true, changed, subscriptions: ctx.streams.listSubscriptions() };
+      execute: async ({ name }) => ({ ok: true, streams: ctx.streams.listDefinitions({ name }) }),
+    }),
+    stream_definition_set: tool({
+      description: 'Create or replace a buffered, SSE, Web API, camera, or desktop-capture stream. The live change is immediate; persistToConfig controls config.json projection.',
+      inputSchema: jsonSchema<StreamDefinitionToolInput>({
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['buffered', 'sse', 'web_api', 'camera', 'desktop_capture'] },
+          name: { type: 'string' },
+          url: { type: 'string' },
+          headers: { type: 'object', additionalProperties: { type: 'string' } },
+          active: { type: 'boolean' },
+          waking: { type: 'boolean' },
+          maxPayloads: { type: 'number' },
+          intervalMs: { type: 'number' },
+          emitUnchanged: { type: 'boolean' },
+          ignorePaths: { type: 'array', items: { type: 'string' } },
+          format: { type: 'string' },
+          mode: { type: 'string', enum: ['stills', 'video'] },
+          fps: { type: 'number' },
+          width: { type: 'number' },
+          height: { type: 'number' },
+          duration: { type: 'number' },
+          motionGate: { type: 'boolean' },
+          maxBufferedChunks: { type: 'number' },
+          persistToConfig: { type: 'boolean' },
+        },
+        required: ['kind', 'name', 'persistToConfig'],
+        additionalProperties: false,
+      }),
+      execute: async input => {
+        const definition = streamDefinitionFromTool(input);
+        return ctx.streams.setDefinition(definition, input.persistToConfig);
       },
     }),
-    unsubscribe_stream: tool({
-      description: 'Stop watching a stream. The clock stream cannot be unsubscribed.',
-      inputSchema: jsonSchema<{ stream: string }>({
+    stream_definition_remove: tool({
+      description: 'Remove a stream definition and stop its connector. Integration-owned and protected system definitions cannot be removed.',
+      inputSchema: jsonSchema<{ name: string; persistToConfig: boolean }>({
         type: 'object',
         properties: {
-          stream: { type: 'string', description: 'The stream name to unsubscribe from.' },
+          name: { type: 'string' },
+          persistToConfig: { type: 'boolean' },
         },
-        required: ['stream'],
+        required: ['name', 'persistToConfig'],
         additionalProperties: false,
       }),
-      execute: async ({ stream }) => {
-        const changed = ctx.streams.unsubscribe(stream);
-        ctx.log.append({
-          type: 'subscription_changed',
-          at: new Date().toISOString(),
-          stream,
-          subscribed: false,
-        });
-        return { ok: true, changed, subscriptions: ctx.streams.listSubscriptions() };
+      execute: async ({ name, persistToConfig }) => ctx.streams.removeDefinition(name, persistToConfig),
+    }),
+    gaze_list: tool({
+      description: 'List active and inactive gaze across every stream kind, with optional filters.',
+      inputSchema: jsonSchema<{ name?: string; active?: boolean; waking?: boolean }>({
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          active: { type: 'boolean' },
+          waking: { type: 'boolean' },
+        },
+        additionalProperties: false,
+      }),
+      execute: async filter => ({ ok: true, streams: ctx.streams.list(filter) }),
+    }),
+    gaze_set: tool({
+      description: 'Activate or deactivate a defined stream and optionally change whether it wakes the agent. Runtime changes remain in durable gaze state; persistToConfig also projects them into config.json.',
+      inputSchema: jsonSchema<{ name: string; active?: boolean; waking?: boolean; persistToConfig: boolean }>({
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          active: { type: 'boolean' },
+          waking: { type: 'boolean' },
+          persistToConfig: { type: 'boolean' },
+        },
+        required: ['name', 'persistToConfig'],
+        additionalProperties: false,
+      }),
+      execute: async ({ name, active, waking, persistToConfig }) => {
+        if (active === undefined && waking === undefined) throw new Error('gaze_set requires active or waking');
+        return ctx.streams.setGaze(name, { active, waking }, persistToConfig);
       },
+    }),
+    gaze_remove: tool({
+      description: 'Remove a defined stream from gaze while retaining its definition. Equivalent to active=false.',
+      inputSchema: jsonSchema<{ name: string; persistToConfig: boolean }>({
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          persistToConfig: { type: 'boolean' },
+        },
+        required: ['name', 'persistToConfig'],
+        additionalProperties: false,
+      }),
+      execute: async ({ name, persistToConfig }) => ctx.streams.setGaze(name, { active: false }, persistToConfig),
     }),
     text_stream_open: tool({
       description:
-        'Begin reading a UTF-8 text file as a gaze stream. Returns the first chunk immediately, then future Soundings include the next chunk until EOF or text_stream_close/unsubscribe_stream.',
+        'Begin reading a UTF-8 text file as a gaze stream. Returns the first chunk immediately, then future Soundings include the next chunk until EOF or text_stream_close/gaze_remove.',
       inputSchema: jsonSchema<{ path: string; charsPerSounding?: number; resumeAtChar?: number }>({
         type: 'object',
         properties: {
@@ -94,7 +153,7 @@ export function createStreamTools(ctx: LookoutToolContext) {
     }),
     video_stream_open: tool({
       description:
-        'Begin reading a video file as a gaze stream. Streams video chunks when the active model supports video input, otherwise extracts image frames on-the-fly based on elapsed time between Soundings. Returns the initial chunk immediately, then future Soundings include subsequent chunks until video end or video_stream_close/unsubscribe_stream.',
+        'Begin reading a video file as a gaze stream. Streams video chunks when the active model supports video input, otherwise extracts image frames on-the-fly based on elapsed time between Soundings. Returns the initial chunk immediately, then future Soundings include subsequent chunks until video end or video_stream_close/gaze_remove.',
       inputSchema: jsonSchema<{ path: string; fps?: number; speed?: number; resumeAtSecond?: number; width?: number; height?: number }>({
         type: 'object',
         properties: {
@@ -143,7 +202,7 @@ export function createStreamTools(ctx: LookoutToolContext) {
     }),
     audio_stream_open: tool({
       description:
-        'Begin reading an audio file as a gaze stream. Extracts audio chunks on-the-fly based on elapsed time between Soundings. Returns the initial chunk immediately, then future Soundings include subsequent chunks until audio end or audio_stream_close/unsubscribe_stream.',
+        'Begin reading an audio file as a gaze stream. Extracts audio chunks on-the-fly based on elapsed time between Soundings. Returns the initial chunk immediately, then future Soundings include subsequent chunks until audio end or audio_stream_close/gaze_remove.',
       inputSchema: jsonSchema<{ path: string; speed?: number; sampleRate?: number; channels?: number; format?: string; resumeAtSecond?: number }>({
         type: 'object',
         properties: {
@@ -192,7 +251,7 @@ export function createStreamTools(ctx: LookoutToolContext) {
     }),
     av_stream_open: tool({
       description:
-        'Begin reading one media file containing audio and video as a single gaze stream. Extracts audio chunks and streams video chunks when the active model supports video input, otherwise samples image frames, from one shared media timeline based on elapsed time between Soundings. Returns the initial audio/video chunk immediately, then future Soundings include subsequent chunks until media end or av_stream_close/unsubscribe_stream.',
+        'Begin reading one media file containing audio and video as a single gaze stream. Extracts audio chunks and streams video chunks when the active model supports video input, otherwise samples image frames, from one shared media timeline based on elapsed time between Soundings. Returns the initial audio/video chunk immediately, then future Soundings include subsequent chunks until media end or av_stream_close/gaze_remove.',
       inputSchema: jsonSchema<{ path: string; fps?: number; speed?: number; sampleRate?: number; channels?: number; format?: string; resumeAtSecond?: number; width?: number; height?: number }>({
         type: 'object',
         properties: {
@@ -242,18 +301,82 @@ export function createStreamTools(ctx: LookoutToolContext) {
         return result;
       },
     }),
-    report_gaze: tool({
-      description: 'Report the current stream subscriptions.',
-      inputSchema: jsonSchema<Record<string, never>>({
-        type: 'object',
-        properties: {},
-        additionalProperties: false,
-      }),
-      execute: async () => ({
-        ok: true,
-        subscriptions: ctx.streams.listSubscriptions(),
-      }),
-    }),
+  };
+}
+
+type StreamDefinitionToolInput = {
+  kind: PersistedStreamConfig['kind'];
+  name: string;
+  url?: string;
+  headers?: Record<string, string>;
+  active?: boolean;
+  waking?: boolean;
+  maxPayloads?: number;
+  intervalMs?: number;
+  emitUnchanged?: boolean;
+  ignorePaths?: string[];
+  format?: string;
+  mode?: 'stills' | 'video';
+  fps?: number;
+  width?: number;
+  height?: number;
+  duration?: number;
+  motionGate?: boolean;
+  maxBufferedChunks?: number;
+  persistToConfig: boolean;
+};
+
+function streamDefinitionFromTool(input: StreamDefinitionToolInput): PersistedStreamConfig {
+  const name = input.name.trim();
+  if (!name) throw new Error('stream name is required');
+  if (input.kind === 'buffered') {
+    return { kind: input.kind, name, active: input.active, waking: input.waking, maxPayloads: input.maxPayloads };
+  }
+  if (input.kind === 'desktop_capture') {
+    return {
+      kind: input.kind,
+      name,
+      active: input.active,
+      waking: input.waking,
+      fps: input.fps,
+      width: input.width,
+      height: input.height,
+      maxBufferedChunks: input.maxBufferedChunks,
+    };
+  }
+  const url = input.url?.trim();
+  if (!url) throw new Error(`${input.kind} streams require url`);
+  if (input.kind === 'sse') {
+    return { kind: input.kind, name, url, headers: input.headers, active: input.active, waking: input.waking, maxPayloads: input.maxPayloads };
+  }
+  if (input.kind === 'web_api') {
+    if (input.format !== undefined && input.format !== 'tinyplace_canvas') throw new Error('web_api format must be tinyplace_canvas when provided');
+    return {
+      kind: input.kind,
+      name,
+      url,
+      headers: input.headers,
+      active: input.active,
+      waking: input.waking,
+      intervalMs: input.intervalMs,
+      emitUnchanged: input.emitUnchanged,
+      ignorePaths: input.ignorePaths,
+      format: input.format as 'tinyplace_canvas' | undefined,
+    };
+  }
+  return {
+    kind: input.kind,
+    name,
+    url,
+    active: input.active,
+    waking: input.waking,
+    mode: input.mode,
+    fps: input.fps,
+    width: input.width,
+    height: input.height,
+    duration: input.duration,
+    motionGate: input.motionGate,
+    maxBufferedChunks: input.maxBufferedChunks,
   };
 }
 

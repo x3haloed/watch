@@ -7,7 +7,8 @@ import { configPath, eventLogPath } from './paths.js';
 import { sendControl } from './client.js';
 import { runDaemon } from './server.js';
 import { runOperatorConsole } from './tui.js';
-import type { CameraStreamConfig, MoltbookConfig, WatchConfig, WebApiStreamConfig, SseStreamConfig } from './types.js';
+import type { CameraStreamConfig, MoltbookConfig, PersistedStreamConfig, WatchConfig, WebApiStreamConfig, SseStreamConfig } from './types.js';
+import { resolveStreamConfigs } from './stream-config.js';
 
 dotenv.config();
 
@@ -20,6 +21,7 @@ type WatchConfigFile = {
   webApiStreams?: WebApiStreamConfig[];
   sseStreams?: SseStreamConfig[];
   cameraStreams?: CameraStreamConfig[];
+  streams?: PersistedStreamConfig[];
   moltbook?: MoltbookConfig;
   scratchpad?: WatchConfig['scratchpad'];
   restAfterNoToolSoundings?: number;
@@ -158,6 +160,7 @@ function defaultConfig(instanceRoot: string, cloneRoot: string, file: WatchConfi
   if (!defaultModel?.trim()) {
     throw new Error('No default model configured. Set defaultModel in config.json or pass --model.');
   }
+  const streams = resolveStreamConfigs(file);
   return {
     instanceRoot,
     cloneRoot,
@@ -169,6 +172,7 @@ function defaultConfig(instanceRoot: string, cloneRoot: string, file: WatchConfi
     webApiStreams: Array.isArray(file.webApiStreams) ? file.webApiStreams : [],
     sseStreams: Array.isArray(file.sseStreams) ? file.sseStreams : [],
     cameraStreams: Array.isArray(file.cameraStreams) ? file.cameraStreams : [],
+    streams,
     game: file.game?.controlUrl ? {
       controlUrl: String(file.game.controlUrl).replace(/\/+$/, ''),
       actionTimeoutMs: typeof file.game.actionTimeoutMs === 'number' ? file.game.actionTimeoutMs : undefined,

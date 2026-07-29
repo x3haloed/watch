@@ -327,7 +327,7 @@ export class TextFileStream implements WatchStream {
       chunk,
       hint: done
         ? 'Text stream reached EOF and will be removed from gaze.'
-        : `Next Sounding will include chars ${this.nextChar}-${Math.min(this.content.length, this.nextChar + this.charsPerSounding)}. Call text_stream_close or unsubscribe_stream to stop.`,
+        : `Next Sounding will include chars ${this.nextChar}-${Math.min(this.content.length, this.nextChar + this.charsPerSounding)}. Call text_stream_close or gaze_remove to stop.`,
     };
   }
 
@@ -945,7 +945,7 @@ export class AudioFileStream implements WatchStream {
         done,
         hint: done
           ? 'Audio stream reached end and will be removed from gaze.'
-          : `Next Sounding will include audio chunk. Call audio_stream_close or unsubscribe_stream to stop.`,
+          : `Next Sounding will include audio chunk. Call audio_stream_close or gaze_remove to stop.`,
       },
     };
   }
@@ -1066,7 +1066,7 @@ export class VideoFileStream implements WatchStream {
         ...video,
         hint: done
           ? 'Video stream reached end and will be removed from gaze.'
-          : `Next Sounding will include video chunks. Call video_stream_close or unsubscribe_stream to stop.`,
+          : `Next Sounding will include video chunks. Call video_stream_close or gaze_remove to stop.`,
       },
     };
   }
@@ -1227,7 +1227,7 @@ export class AudioVideoFileStream implements WatchStream {
         video,
         hint: done
           ? 'Audio/video stream reached end and will be removed from gaze.'
-          : `Next Sounding will include audio chunk and video chunks. Call av_stream_close or unsubscribe_stream to stop.`,
+          : `Next Sounding will include audio chunk and video chunks. Call av_stream_close or gaze_remove to stop.`,
       }),
     };
   }
@@ -1420,6 +1420,10 @@ export class DesktopCaptureBridge {
   stop(): void {
     this.running = false;
     void this.discardCurrentSegment();
+  }
+
+  status(): 'stopped' | 'connected' {
+    return this.running ? 'connected' : 'stopped';
   }
 
   startSegment(): void {

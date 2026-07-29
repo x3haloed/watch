@@ -16,40 +16,50 @@
     "agentMaxChars": 2000,
     "userMaxChars": 2000
   },
-  "webApiStreams": [
+  "streams": [
     {
+      "kind": "web_api",
       "name": "usgs:earthquakes:all_hour",
       "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
       "intervalMs": 900000,
-      "subscribed": false,
+      "active": false,
       "waking": false
     },
     {
+      "kind": "web_api",
       "name": "tinyplace:main",
       "url": "https://tinyplace.chadjkirby.workers.dev/canvas",
       "intervalMs": 5000,
-      "subscribed": true,
+      "active": true,
       "waking": false,
-      "kind": "tinyplace_canvas"
-    }
-  ],
-  "sseStreams": [
+      "format": "tinyplace_canvas"
+    },
     {
+      "kind": "sse",
       "name": "tinygrove:stream",
       "url": "http://127.0.0.1:37373/stream?waking=true",
-      "subscribed": true,
+      "active": true,
       "waking": true
-    }
-  ],
-  "cameraStreams": [
+    },
     {
+      "kind": "camera",
       "name": "camera:motion",
       "url": "ws://127.0.0.1:8765/",
       "mode": "stills",
       "fps": 2,
       "motionGate": true,
-      "subscribed": false,
+      "active": false,
       "waking": true,
+      "maxBufferedChunks": 3
+    },
+    {
+      "kind": "desktop_capture",
+      "name": "desktop:capture",
+      "fps": 3,
+      "width": 1024,
+      "height": 768,
+      "waking": false,
+      "active": false,
       "maxBufferedChunks": 3
     }
   ],
@@ -65,16 +75,6 @@
         "type": "home"
       }
     ]
-  },
-  "desktopCapture": {
-    "enabled": true,
-    "name": "desktop:capture",
-    "fps": 3,
-    "width": 1024,
-    "height": 768,
-    "waking": false,
-    "subscribed": false,
-    "maxBufferedChunks": 3
   },
   "minCffMs": 10000,
   "maxCffMs": 300000,
