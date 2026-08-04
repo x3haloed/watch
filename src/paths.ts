@@ -1,5 +1,13 @@
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+
+export function resolveInstanceRoot(cloneRoot: string, override?: string): string {
+  const configured = override?.trim();
+  if (configured) {
+    return resolve(configured);
+  }
+  return dirname(cloneRoot);
+}
 
 export function instanceDir(instanceRoot: string): string {
   return instanceRoot;
