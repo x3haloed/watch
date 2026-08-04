@@ -8,7 +8,7 @@ import { EventLog } from '../src/event-log.js';
 import { GazeStore } from '../src/gaze-state.js';
 import { SessionController } from '../src/session-controller.js';
 import { resolveScratchpadPaths } from '../src/scratchpad.js';
-import { eventLogPath, socketPath, statePath } from '../src/paths.js';
+import { eventLogPath, resolveInstanceRoot, socketPath, statePath } from '../src/paths.js';
 
 test('daemon start fails cleanly when the parent config.json is missing', () => {
   const instanceRoot = mkdtempSync(join(tmpdir(), 'watch-instance-'));
@@ -23,6 +23,22 @@ test('daemon start fails cleanly when the parent config.json is missing', () => 
   });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout ?? ''}\n${result.stderr ?? ''}`, /config\.json/);
+});
+
+test('instance root defaults to the clone parent', () => {
+  const instanceRoot = mkdtempSync(join(tmpdir(), 'watch-instance-'));
+  const cloneRoot = join(instanceRoot, 'watch');
+
+  assert.equal(resolveInstanceRoot(cloneRoot), instanceRoot);
+});
+
+test('WATCH_INSTANCE_ROOT overrides the clone parent and resolves absolutely', () => {
+  const cloneRoot = join(tmpdir(), 'watch-source', 'watch');
+  const absoluteRoot = join(tmpdir(), 'watch-runtime');
+
+  assert.equal(resolveInstanceRoot(cloneRoot, absoluteRoot), absoluteRoot);
+  assert.equal(resolveInstanceRoot(cloneRoot, 'relative-watch-runtime'), resolve('relative-watch-runtime'));
+  assert.equal(resolveInstanceRoot(cloneRoot, '   '), dirname(cloneRoot));
 });
 
 test('relative ledger paths resolve from the instance root', async () => {

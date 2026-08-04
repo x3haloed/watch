@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { cwd, exit } from 'node:process';
 import * as dotenv from 'dotenv';
-import { configPath, eventLogPath } from './paths.js';
+import { configPath, eventLogPath, resolveInstanceRoot } from './paths.js';
 import { sendControl } from './client.js';
 import { runDaemon } from './server.js';
 import { runOperatorConsole } from './tui.js';
@@ -35,7 +34,7 @@ type WatchConfigFile = {
 async function main(): Promise<void> {
   const [area, action, ...args] = process.argv.slice(2);
   const cloneRoot = cwd();
-  const instanceRoot = dirname(cloneRoot);
+  const instanceRoot = resolveInstanceRoot(cloneRoot, process.env.WATCH_INSTANCE_ROOT);
   const configFile = readWatchConfig(instanceRoot);
 
   if (!area) {
