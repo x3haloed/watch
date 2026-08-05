@@ -24,13 +24,13 @@
     "@types/blessed": "^0.1.27",
     "ai": "^6.0.193",
     "blessed": "^0.1.81",
-    "discord.js": "^14.26.4",
+    "discord.js": "^14.27.0",
     "dotenv": "^17.4.2",
     "three": "^0.184.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
-    "electron": "^42.4.0",
+    "electron": "^42.8.1",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3"
   }
