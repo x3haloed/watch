@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { captureInputFromWatchEvent, MemoryLattice } from '../src/memory-lattice.js';
@@ -81,6 +81,33 @@ test('MemoryLattice stores candidate shown telemetry outside append-only records
     assert.equal(first.candidates[0]?.shownCount, 1);
     assert.equal(second.candidates[0]?.shownCount, 2);
     assert.equal(new MemoryLattice(instanceRoot).search('provenance')[0]?.shownCount, 2);
+  } finally {
+    rmSync(instanceRoot, { recursive: true, force: true });
+  }
+});
+
+test('MemoryLattice compacts amplified history with a bounded recoverable backup', () => {
+  const instanceRoot = mkdtempSync(join(tmpdir(), 'watch-instance-'));
+  try {
+    const memory = new MemoryLattice(instanceRoot);
+    let recordId = '';
+    for (let index = 0; index < 260; index += 1) {
+      recordId = memory.captureEpisode({
+        kind: 'recurring',
+        text: 'The same current memory should not create unbounded read amplification.',
+        provenance: { soundingIds: [`s${index}`] },
+      }).id;
+    }
+
+    const memoryPath = join(instanceRoot, 'memory');
+    const latticePath = join(memoryPath, 'lattice.jsonl');
+    const lines = readFileSync(latticePath, 'utf8').split('\n').filter(Boolean);
+    const backups = readdirSync(memoryPath).filter(name => name.startsWith('lattice.jsonl.backup-auto-'));
+    assert.ok(lines.length < 10);
+    assert.equal(backups.length, 1);
+    assert.ok(readFileSync(join(memoryPath, backups[0]), 'utf8').split('\n').filter(Boolean).length >= 256);
+    assert.equal(new MemoryLattice(instanceRoot).get(recordId)?.provenance.soundingIds?.length, 260);
+    assert.equal(existsSync(join(memoryPath, 'lattice.write.lock')), false);
   } finally {
     rmSync(instanceRoot, { recursive: true, force: true });
   }

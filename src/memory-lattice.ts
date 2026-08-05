@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import type { JsonObject, Sounding } from './types.js';
 
 export type MemoryLayer = 'episode' | 'pattern' | 'principle';
@@ -86,16 +86,23 @@ export type MemoryTraceInput = {
 
 const MAX_CANDIDATES = 12;
 const MAX_BLOCK_CHARS = 6000;
+const COMPACTION_MIN_LINES = 256;
+const COMPACTION_AMPLIFICATION = 4;
+const MAX_AUTOMATIC_BACKUPS = 2;
+const WRITE_LOCK_STALE_MS = 5 * 60_000;
+const WRITE_LOCK_WAIT_MS = 30_000;
 
 export class MemoryLattice {
   private readonly path: string;
   private readonly indexPath: string;
   private readonly activityPath: string;
+  private readonly writeLockPath: string;
 
   constructor(instanceRoot: string) {
     this.path = join(instanceRoot, 'memory', 'lattice.jsonl');
     this.indexPath = join(instanceRoot, 'memory', 'lattice-index.json');
     this.activityPath = join(instanceRoot, 'memory', 'lattice-activity.json');
+    this.writeLockPath = join(instanceRoot, 'memory', 'lattice.write.lock');
     mkdirSync(dirname(this.path), { recursive: true });
   }
 
@@ -143,14 +150,16 @@ export class MemoryLattice {
   }
 
   listCandidates(context: MemoryCandidateContext = {}, limit = MAX_CANDIDATES): MemoryRecord[] {
-    const terms = tokenize([context.text, context.tags?.join(' ')].filter(Boolean).join(' '));
-    const candidates = this.records()
-      .filter(record => record.status === 'active')
-      .map(record => ({ record, score: candidateScore(record, terms, context) }))
-      .sort((a, b) => b.score - a.score || b.record.updatedAt.localeCompare(a.record.updatedAt))
-      .slice(0, Math.min(limit, MAX_CANDIDATES))
-      .map(({ record }) => record);
-    return this.markShownBatch(candidates);
+    return this.withWriteLock(() => {
+      const terms = tokenize([context.text, context.tags?.join(' ')].filter(Boolean).join(' '));
+      const candidates = this.readSnapshot().records
+        .filter(record => record.status === 'active')
+        .map(record => ({ record, score: candidateScore(record, terms, context) }))
+        .sort((a, b) => b.score - a.score || b.record.updatedAt.localeCompare(a.record.updatedAt))
+        .slice(0, Math.min(limit, MAX_CANDIDATES))
+        .map(({ record }) => record);
+      return this.markShownBatch(candidates);
+    });
   }
 
   reinforce(id: string, outcome: 'used' | 'success' | 'cited' = 'used'): MemoryRecord {
@@ -238,11 +247,17 @@ export class MemoryLattice {
   }
 
   records(): MemoryRecord[] {
+    return this.readSnapshot().records;
+  }
+
+  private readSnapshot(): LatticeSnapshot {
     if (!existsSync(this.path)) {
-      return [];
+      return { records: [], lineCount: 0 };
     }
     const byId = new Map<string, MemoryRecord>();
+    let lineCount = 0;
     for (const line of readFileSync(this.path, 'utf8').split('\n').filter(Boolean)) {
+      lineCount += 1;
       try {
         const record = JSON.parse(line) as MemoryRecord;
         byId.set(record.id, record);
@@ -251,7 +266,10 @@ export class MemoryLattice {
       }
     }
     const activity = this.readActivity();
-    return [...byId.values()].map(record => applyActivity(record, activity.shown[record.id]));
+    return {
+      records: [...byId.values()].map(record => applyActivity(record, activity.shown[record.id])),
+      lineCount,
+    };
   }
 
   private upsert(input: {
@@ -272,10 +290,12 @@ export class MemoryLattice {
     heat?: MemoryHeat;
     status?: MemoryStatus;
   }): MemoryRecord {
-    const duplicate = duplicateKey(input.layer, input.kind, input.text);
-    const existing = this.records().find(record => record.duplicateKey === duplicate && record.status === (input.status ?? 'active'));
-    const at = nowIso();
-    const record: MemoryRecord = existing
+    return this.withWriteLock(() => {
+      const snapshot = this.readSnapshot();
+      const duplicate = duplicateKey(input.layer, input.kind, input.text);
+      const existing = snapshot.records.find(record => record.duplicateKey === duplicate && record.status === (input.status ?? 'active'));
+      const at = nowIso();
+      const record: MemoryRecord = existing
       ? {
           ...existing,
           updatedAt: at,
@@ -318,18 +338,22 @@ export class MemoryLattice {
           heat: input.heat,
           duplicateKey: duplicate,
         };
-    this.append(record);
-    return record;
+      this.persistUpdatesLocked(snapshot, [record]);
+      return record;
+    });
   }
 
   private update(id: string, updater: (record: MemoryRecord) => MemoryRecord): MemoryRecord {
-    const record = this.get(id);
-    if (!record) {
-      throw new Error(`memory not found: ${id}`);
-    }
-    const updated = { ...updater(record), updatedAt: nowIso() };
-    this.append(updated);
-    return updated;
+    return this.withWriteLock(() => {
+      const snapshot = this.readSnapshot();
+      const record = snapshot.records.find(candidate => candidate.id === id);
+      if (!record) {
+        throw new Error(`memory not found: ${id}`);
+      }
+      const updated = { ...updater(record), updatedAt: nowIso() };
+      this.persistUpdatesLocked(snapshot, [updated]);
+      return updated;
+    });
   }
 
   private markShownBatch(records: MemoryRecord[]): MemoryRecord[] {
@@ -349,20 +373,50 @@ export class MemoryLattice {
     return updatedRecords;
   }
 
-  private append(record: MemoryRecord): void {
-    appendFileSync(this.path, `${JSON.stringify(record)}\n`, 'utf8');
-    this.writeIndex();
+  private persistUpdatesLocked(snapshot: LatticeSnapshot, updates: MemoryRecord[]): void {
+    appendFileSync(this.path, `${updates.map(record => JSON.stringify(record)).join('\n')}\n`, 'utf8');
+    const records = mergeCurrentRecords(snapshot.records, updates);
+    const lineCount = snapshot.lineCount + updates.length;
+    if (shouldCompact(lineCount, records.length)) {
+      this.compactHistoryLocked(records);
+    }
+    this.writeIndex(records);
   }
 
-  private writeIndex(): void {
-    const records = this.records();
-    writeFileSync(this.indexPath, JSON.stringify({
+  private compactHistoryLocked(records: MemoryRecord[]): void {
+    const stamp = nowIso().replace(/[:.]/g, '-');
+    const backupPath = `${this.path}.backup-auto-${stamp}-${randomUUID().slice(0, 8)}`;
+    const temporaryPath = `${this.path}.compact-${process.pid}-${randomUUID()}`;
+    copyFileSync(this.path, backupPath);
+    try {
+      writeFileSync(temporaryPath, serializeRecords(records), 'utf8');
+      renameSync(temporaryPath, this.path);
+    } finally {
+      if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
+    }
+    this.pruneAutomaticBackups();
+  }
+
+  private pruneAutomaticBackups(): void {
+    const directory = dirname(this.path);
+    const prefix = `${basename(this.path)}.backup-auto-`;
+    const backups = readdirSync(directory)
+      .filter(name => name.startsWith(prefix))
+      .map(name => ({ path: join(directory, name), mtimeMs: statSync(join(directory, name)).mtimeMs }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    for (const backup of backups.slice(MAX_AUTOMATIC_BACKUPS)) unlinkSync(backup.path);
+  }
+
+  private writeIndex(records: MemoryRecord[]): void {
+    const temporaryPath = `${this.indexPath}.tmp-${process.pid}-${randomUUID()}`;
+    writeFileSync(temporaryPath, JSON.stringify({
       updatedAt: nowIso(),
       ids: records.map(record => record.id),
       activeIds: records.filter(record => record.status === 'active').map(record => record.id),
       byLayer: countBy(records, record => record.layer),
       byStatus: countBy(records, record => record.status),
     }, null, 2), 'utf8');
+    renameSync(temporaryPath, this.indexPath);
   }
 
   private readActivity(): MemoryActivity {
@@ -382,11 +436,39 @@ export class MemoryLattice {
   }
 
   private writeActivity(activity: MemoryActivity): void {
-    const tmpPath = `${this.activityPath}.tmp`;
+    const tmpPath = `${this.activityPath}.tmp-${process.pid}-${randomUUID()}`;
     writeFileSync(tmpPath, `${JSON.stringify(activity, null, 2)}\n`, 'utf8');
     renameSync(tmpPath, this.activityPath);
   }
+
+  private withWriteLock<T>(operation: () => T): T {
+    const startedAt = Date.now();
+    while (true) {
+      try {
+        const descriptor = openSync(this.writeLockPath, 'wx');
+        closeSync(descriptor);
+        break;
+      } catch (error) {
+        if (!isAlreadyExistsError(error)) throw error;
+        if (isStaleLock(this.writeLockPath)) {
+          unlinkSync(this.writeLockPath);
+          continue;
+        }
+        if (Date.now() - startedAt >= WRITE_LOCK_WAIT_MS) {
+          throw new Error(`timed out waiting for memory lattice write lock: ${this.writeLockPath}`);
+        }
+        sleepSync(10);
+      }
+    }
+    try {
+      return operation();
+    } finally {
+      if (existsSync(this.writeLockPath)) unlinkSync(this.writeLockPath);
+    }
+  }
 }
+
+type LatticeSnapshot = { records: MemoryRecord[]; lineCount: number };
 
 function applyActivity(record: MemoryRecord, activity: MemoryActivityRecord | undefined): MemoryRecord {
   if (!activity) {
@@ -538,6 +620,37 @@ function truncate(text: string, max: number): string {
 
 function unique<T>(items: T[]): T[] {
   return [...new Set(items.filter(item => item !== undefined && item !== null))];
+}
+
+function mergeCurrentRecords(existing: MemoryRecord[], updates: MemoryRecord[]): MemoryRecord[] {
+  const byId = new Map(existing.map(record => [record.id, record]));
+  for (const update of updates) byId.set(update.id, update);
+  return [...byId.values()];
+}
+
+function serializeRecords(records: MemoryRecord[]): string {
+  return records.map(record => JSON.stringify(record)).join('\n') + (records.length > 0 ? '\n' : '');
+}
+
+function shouldCompact(lineCount: number, recordCount: number): boolean {
+  return lineCount >= COMPACTION_MIN_LINES
+    && lineCount > Math.max(1, recordCount) * COMPACTION_AMPLIFICATION;
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+  return !!error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST';
+}
+
+function isStaleLock(path: string): boolean {
+  try {
+    return Date.now() - statSync(path).mtimeMs >= WRITE_LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+
+function sleepSync(milliseconds: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
 function countBy<T extends string>(records: MemoryRecord[], key: (record: MemoryRecord) => T): Record<T, number> {
