@@ -194,7 +194,6 @@ export class WatchRuntime {
       moltbook: this.moltbook.getAttention(),
       gazeState: this.gazeStore.snapshot(),
       scratchpad: this.scratchpad?.read() ?? { ok: false, enabled: false },
-      memory: { recent: this.memory.recent(10) },
       minCffMs: this.config.minCffMs,
       maxCffMs: this.config.maxCffMs,
       modelTimeoutMs: this.config.modelTimeoutMs,
@@ -207,6 +206,20 @@ export class WatchRuntime {
       modelBackoffUntil: this.modelBackoffUntil > Date.now() ? new Date(this.modelBackoffUntil).toISOString() : undefined,
       pendingDeltas: this.streams.hasPending(),
     };
+  }
+
+  recentMemory(limit = 40): Array<Record<string, unknown>> {
+    return this.memory.recent(limit).map(r => ({
+      id: r.id,
+      layer: r.layer,
+      kind: r.kind,
+      summary: r.summary,
+      text: r.text.slice(0, 500),
+      confidence: r.confidence,
+      status: r.status,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    }));
   }
 
   enqueueInboxMessage(message: string, source = 'cli', metadata?: JsonObject): { accepted: boolean } {
