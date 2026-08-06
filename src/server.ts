@@ -55,10 +55,15 @@ export async function runDaemon(config: WatchConfig): Promise<void> {
     removeSocket(path);
     lock.release();
     process.off('uncaughtExceptionMonitor', observeFatalError);
+    let exitCode = 0;
     if (restart) {
-      spawnReplacementDaemon(config.cloneRoot);
+      const plan = daemonRestartPlan(process.env);
+      if (plan.spawnReplacement) {
+        spawnReplacementDaemon(config.cloneRoot);
+      }
+      exitCode = plan.exitCode;
     }
-    process.exit(0);
+    process.exit(exitCode);
   }
 
   try {
@@ -99,6 +104,15 @@ export async function runDaemon(config: WatchConfig): Promise<void> {
     process.off('uncaughtExceptionMonitor', observeFatalError);
     throw error;
   }
+}
+
+export function daemonRestartPlan(env: NodeJS.ProcessEnv): { spawnReplacement: boolean; exitCode: number } {
+  if (env.INVOCATION_ID?.trim()) {
+    // systemd owns the cgroup. A non-zero exit delegates the restart to
+    // Restart=on-failure without turning an intentional stop into a restart.
+    return { spawnReplacement: false, exitCode: 75 };
+  }
+  return { spawnReplacement: true, exitCode: 0 };
 }
 
 type DaemonLock = {
