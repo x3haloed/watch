@@ -33,7 +33,7 @@ import { createLookoutTools } from './lookout-tools.js';
 import { MediaService, type OpenMediaInput } from './media-service.js';
 import { MemoryLattice } from './memory-lattice.js';
 import { SeedCrystalStore } from './seed-crystals.js';
-import { RefinementStore } from './refinements.js';
+import { RefinementStore, resolveFileEvidence } from './refinements.js';
 import { readSeedCrystalControl } from './seed-crystal-control.js';
 import { SessionController, type CurlResult, type RebootRequest } from './session-controller.js';
 import { SoundingPromptBuilder } from './sounding-prompt.js';
@@ -100,7 +100,7 @@ export class Lookout {
     this.memory = new MemoryLattice(instanceRoot);
     this.refinements = new RefinementStore(instanceRoot, reference => {
       if (reference.kind === 'lattice') return this.memory.get(reference.id) ? { resolved: true } : { resolved: false, reason: 'lattice record not found' };
-      if (reference.kind === 'file') return existsSync(resolve(instanceRoot, reference.path)) ? { resolved: true } : { resolved: false, reason: 'file not found' };
+      if (reference.kind === 'file') return resolveFileEvidence(instanceRoot, reference.path);
       return { resolved: false, reason: 'ledger evidence is not available in this harness' };
     });
     const seedControl = readSeedCrystalControl(instanceRoot);
