@@ -321,6 +321,8 @@ export type WatchEvent =
   | { type: 'daemon_started'; at: string; pid: number; config: WatchConfig }
   | { type: 'daemon_start_blocked'; at: string; pid?: number; lockPath: string; reason: string }
   | { type: 'daemon_stopped'; at: string; pid?: number; reason: string }
+  | { type: 'daemon_previous_exit_unobserved'; at: string; previousPid: number; startedAt: string; lastHeartbeatAt: string }
+  | { type: 'daemon_fatal_error'; at: string; pid: number; error: string }
   | { type: 'stream_buffered'; at: string; stream: string; payload: JsonObject }
   | { type: 'stream_delta'; at: string; delta: StreamDelta }
   | { type: 'camera_stream_connected'; at: string; stream: string; url: string; handshake: JsonObject }
