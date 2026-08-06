@@ -371,6 +371,7 @@ export type WatchEvent =
   | { type: 'memory_contradicted'; at: string; memoryId: string; rationale: string }
   | { type: 'memory_stale'; at: string; memoryId: string; reason: string }
   | { type: 'memory_scratchpad_proposed'; at: string; memoryId: string; memoryIds: string[] }
+  | { type: 'refinement_created' | 'refinement_applied' | 'refinement_evaluated' | 'refinement_rolled_back' | 'refinement_relinquished'; at: string; refinementId: string; payload: JsonObject }
   | { type: 'seed_crystals_injected'; at: string; soundingId: string; crystalIds: string[]; omittedCrystalIds: string[]; bytes: number; estimatedTokens: number; condition: 'normal' | 'controlled_omission' | 'injection_disabled' }
   | { type: 'sse_stream_connected'; at: string; stream: string; url: string }
   | { type: 'sse_stream_disconnected'; at: string; stream: string; reason: string }

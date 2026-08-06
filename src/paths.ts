@@ -67,6 +67,10 @@ export function seedCrystalsPath(instanceRoot: string): string {
   return join(instanceDir(instanceRoot), 'memory', 'seed-crystals.jsonl');
 }
 
+export function refinementsPath(instanceRoot: string): string {
+  return join(instanceDir(instanceRoot), 'memory', 'refinements.jsonl');
+}
+
 export function seedCrystalsIndexPath(instanceRoot: string): string {
   return join(instanceDir(instanceRoot), 'memory', 'seed-crystals-index.json');
 }

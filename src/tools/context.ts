@@ -15,6 +15,7 @@ import type { TerminalTools } from '../terminal-tools.js';
 import type { ResolvedModel } from '../types.js';
 import type { ContextFit } from '../lookout-helpers.js';
 import type { SeedCrystalStore } from '../seed-crystals.js';
+import type { RefinementStore } from '../refinements.js';
 
 export type RerouteRequest = {
   modelId: string;
@@ -37,6 +38,7 @@ export interface LookoutToolContext {
   moltbook?: MoltbookBridge;
   scratchpad?: Scratchpad;
   memory: MemoryLattice;
+  refinements: RefinementStore;
   seedCrystals?: SeedCrystalStore;
   game?: { controlUrl: string; actionTimeoutMs?: number };
   messages: ModelMessage[];

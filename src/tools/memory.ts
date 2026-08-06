@@ -1,6 +1,7 @@
 import { jsonSchema, tool } from 'ai';
 import type { LookoutToolContext } from './context.js';
 import type { ResolvedModel, Sounding } from '../types.js';
+import type { RefinementEvidenceRef } from '../refinements.js';
 
 export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, model?: ResolvedModel) {
   const tools = {
@@ -157,7 +158,87 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
       },
     }),
   };
-  if (!ctx.seedCrystals || !sounding || !model) return tools;
+  const refinementAuthorship = (entryPoint: string) => ({
+    authorKind: 'agent' as const,
+    profileId: model?.id,
+    model: model?.model,
+    entryPoint,
+    soundingId: sounding?.id,
+  });
+  const evidenceRefSchema = {
+    anyOf: [
+      { type: 'object', properties: { kind: { const: 'lattice' }, id: { type: 'string' } }, required: ['kind', 'id'], additionalProperties: false },
+      { type: 'object', properties: { kind: { const: 'ledger' }, id: { type: 'string' } }, required: ['kind', 'id'], additionalProperties: false },
+      { type: 'object', properties: { kind: { const: 'file' }, path: { type: 'string' } }, required: ['kind', 'path'], additionalProperties: false },
+    ],
+  } as const;
+  const refinementTools = {
+    refinement_create: tool({
+      description: 'Open a prospective, evidence-backed self-revision case. Creation records a hypothesis; it does not claim that a change worked.',
+      inputSchema: jsonSchema<{ trigger: string; targetRef: string; hypothesis: string; testCondition: string; evidenceRefs?: RefinementEvidenceRef[] }>({
+        type: 'object', properties: { trigger: { type: 'string' }, targetRef: { type: 'string' }, hypothesis: { type: 'string' }, testCondition: { type: 'string' }, evidenceRefs: { type: 'array', items: evidenceRefSchema } },
+        required: ['trigger', 'targetRef', 'hypothesis', 'testCondition'], additionalProperties: false,
+      }),
+      execute: async input => {
+        const record = ctx.refinements.create({ ...input, authorship: refinementAuthorship('tool:refinement_create') });
+        ctx.log.append({ type: 'refinement_created', at: new Date().toISOString(), refinementId: record.id, payload: { status: record.status, targetRef: record.targetRef } });
+        return { ok: true, record };
+      },
+    }),
+    refinement_apply: tool({
+      description: 'Record the concrete change and its before-snapshot, then wait for the independently specified contact condition.',
+      inputSchema: jsonSchema<{ id: string; change: string; beforeSnapshot: RefinementEvidenceRef; evidenceRefs?: RefinementEvidenceRef[] }>({
+        type: 'object', properties: { id: { type: 'string' }, change: { type: 'string' }, beforeSnapshot: evidenceRefSchema, evidenceRefs: { type: 'array', items: evidenceRefSchema } }, required: ['id', 'change', 'beforeSnapshot'], additionalProperties: false,
+      }),
+      execute: async input => {
+        const record = ctx.refinements.apply({ ...input, authorship: refinementAuthorship('tool:refinement_apply') });
+        ctx.log.append({ type: 'refinement_applied', at: new Date().toISOString(), refinementId: record.id, payload: { status: record.status, version: record.version } });
+        return { ok: true, record };
+      },
+    }),
+    refinement_evaluate: tool({
+      description: 'Evaluate a changed refinement only after later contact. At least one evidence reference is required; persuasive self-description is not evidence of success.',
+      inputSchema: jsonSchema<{ id: string; verdict: 'confirmed' | 'revised' | 'inconclusive'; contact: string; outcome: string; evidenceRefs: RefinementEvidenceRef[] }>({
+        type: 'object', properties: { id: { type: 'string' }, verdict: { type: 'string', enum: ['confirmed', 'revised', 'inconclusive'] }, contact: { type: 'string' }, outcome: { type: 'string' }, evidenceRefs: { type: 'array', items: evidenceRefSchema, minItems: 1 } }, required: ['id', 'verdict', 'contact', 'outcome', 'evidenceRefs'], additionalProperties: false,
+      }),
+      execute: async input => {
+        const record = ctx.refinements.evaluate({ ...input, authorship: refinementAuthorship('tool:refinement_evaluate') });
+        ctx.log.append({ type: 'refinement_evaluated', at: new Date().toISOString(), refinementId: record.id, payload: { status: record.status, version: record.version } });
+        return { ok: true, record };
+      },
+    }),
+    refinement_rollback: tool({
+      description: 'Record an explicit rollback to the stored before-snapshot. This records the decision and evidence; the target mechanism performs the actual reversal.',
+      inputSchema: jsonSchema<{ id: string; rationale: string; evidenceRefs: RefinementEvidenceRef[] }>({
+        type: 'object', properties: { id: { type: 'string' }, rationale: { type: 'string' }, evidenceRefs: { type: 'array', items: evidenceRefSchema, minItems: 1 } }, required: ['id', 'rationale', 'evidenceRefs'], additionalProperties: false,
+      }),
+      execute: async input => {
+        const record = ctx.refinements.rollback({ ...input, authorship: refinementAuthorship('tool:refinement_rollback') });
+        ctx.log.append({ type: 'refinement_rolled_back', at: new Date().toISOString(), refinementId: record.id, payload: { status: record.status, version: record.version } });
+        return { ok: true, record };
+      },
+    }),
+    refinement_relinquish: tool({
+      description: 'Explicitly close an unfinished refinement case without treating abandonment as success or failure.',
+      inputSchema: jsonSchema<{ id: string; rationale: string }>({ type: 'object', properties: { id: { type: 'string' }, rationale: { type: 'string' } }, required: ['id', 'rationale'], additionalProperties: false }),
+      execute: async ({ id, rationale }) => {
+        const record = ctx.refinements.relinquish(id, rationale, refinementAuthorship('tool:refinement_relinquish'));
+        ctx.log.append({ type: 'refinement_relinquished', at: new Date().toISOString(), refinementId: record.id, payload: { status: record.status, version: record.version } });
+        return { ok: true, record };
+      },
+    }),
+    refinement_list: tool({
+      description: 'List current refinement cases. Open cases remain distinct from memory truth and from completed outcomes.',
+      inputSchema: jsonSchema<{ status?: 'proposed' | 'awaiting_contact' | 'confirmed' | 'revised' | 'rolled_back' | 'inconclusive' | 'relinquished' }>({ type: 'object', properties: { status: { type: 'string', enum: ['proposed', 'awaiting_contact', 'confirmed', 'revised', 'rolled_back', 'inconclusive', 'relinquished'] } }, additionalProperties: false }),
+      execute: async ({ status }) => ({ ok: true, entries: ctx.refinements.list(status) }),
+    }),
+    refinement_get: tool({
+      description: 'Read one refinement case and its append-only version history.',
+      inputSchema: jsonSchema<{ id: string }>({ type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false }),
+      execute: async ({ id }) => ({ ok: true, record: ctx.refinements.get(id), history: ctx.refinements.history(id) }),
+    }),
+  };
+  if (!ctx.seedCrystals || !sounding || !model) return { ...tools, ...refinementTools };
   const authorship = (entryPoint: 'mcp:seed_crystal_create' | 'mcp:seed_crystal_revise') => ({
     authorKind: 'agent' as const,
     profileId: model.id,
@@ -167,6 +248,7 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
   });
   return {
     ...tools,
+    ...refinementTools,
     seed_crystal_create: tool({
       description: 'Record self-authored activation language only after it has already produced a field-level shift. Candidate is normal; active is exceptional.',
       inputSchema: jsonSchema<{ status?: 'candidate' | 'active'; crystalType: 'relational_anchor' | 'invariant_name' | 'orienting_statement'; handle: string; crystal: string; rationale: string; parents?: string[]; supersedes?: string }>({

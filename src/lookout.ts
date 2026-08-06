@@ -33,6 +33,7 @@ import { createLookoutTools } from './lookout-tools.js';
 import { MediaService, type OpenMediaInput } from './media-service.js';
 import { MemoryLattice } from './memory-lattice.js';
 import { SeedCrystalStore } from './seed-crystals.js';
+import { RefinementStore } from './refinements.js';
 import { readSeedCrystalControl } from './seed-crystal-control.js';
 import { SessionController, type CurlResult, type RebootRequest } from './session-controller.js';
 import { SoundingPromptBuilder } from './sounding-prompt.js';
@@ -69,6 +70,7 @@ export class Lookout {
   private readonly media: MediaService;
   private readonly session: SessionController;
   private readonly memory: MemoryLattice;
+  private readonly refinements: RefinementStore;
   private readonly seedCrystals?: SeedCrystalStore;
   private readonly tokenTracker = new ContextTokenTracker();
   private readonly cwd: string;
@@ -96,6 +98,11 @@ export class Lookout {
     this.terminalTools = new TerminalTools(instanceRoot, log, redactedEnvNames);
     this.media = new MediaService(this.fileTools, streams.inbox, models);
     this.memory = new MemoryLattice(instanceRoot);
+    this.refinements = new RefinementStore(instanceRoot, reference => {
+      if (reference.kind === 'lattice') return this.memory.get(reference.id) ? { resolved: true } : { resolved: false, reason: 'lattice record not found' };
+      if (reference.kind === 'file') return existsSync(resolve(instanceRoot, reference.path)) ? { resolved: true } : { resolved: false, reason: 'file not found' };
+      return { resolved: false, reason: 'ledger evidence is not available in this harness' };
+    });
     const seedControl = readSeedCrystalControl(instanceRoot);
     this.seedCrystals = seedCrystalPolicy?.enabled && seedCrystalPolicy.injectionEnabled && seedControl.injectionOverride !== false
       ? new SeedCrystalStore(instanceRoot, reference => {
@@ -314,6 +321,7 @@ export class Lookout {
       moltbook: this.moltbook,
       scratchpad: this.scratchpad,
       memory: this.memory,
+      refinements: this.refinements,
       seedCrystals: this.seedCrystals,
       game: this.game,
       messages: this.messages,
