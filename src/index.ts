@@ -287,6 +287,10 @@ function formatLogLine(line: string): string {
         return `${at} daemon start blocked pid=${event.pid ?? '?'} reason=${event.reason}`;
       case 'daemon_stopped':
         return `${at} daemon stopped pid=${event.pid ?? '?'} reason=${event.reason}`;
+      case 'daemon_previous_exit_unobserved':
+        return `${at} daemon previous exit unobserved pid=${event.previousPid} last_heartbeat=${event.lastHeartbeatAt}`;
+      case 'daemon_fatal_error':
+        return `${at} daemon fatal error pid=${event.pid}: ${shortText(event.error)}`;
       case 'stream_delta':
         return `${at} delta ${event.delta?.stream}: ${shortJson(event.delta?.payload)}`;
       case 'stream_buffered':
