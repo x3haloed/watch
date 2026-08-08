@@ -29,7 +29,7 @@ export class SkillLibrary {
       skills: filtered.map(({ name, description, category, path }) => ({ name, description, category, path })),
       categories,
       count: filtered.length,
-      hint: 'Use skill_view with a skill name to load full instructions, or with file_path to load a linked file.',
+      hint: 'skill_view returns full instructions for a skill name and linked files for file_path.',
     };
   }
 

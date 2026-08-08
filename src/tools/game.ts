@@ -21,7 +21,7 @@ export function createGameTools(ctx: LookoutToolContext): ToolSet {
       inputSchema: z.object({
         frameId: z.number().int().optional(),
         kind: z.enum(['drive', 'hold']).default('drive').describe(
-          'Use hold for authored stationary braking with provenance distinct from a timeout.',
+          'hold represents authored stationary braking with provenance distinct from a timeout.',
         ),
         throttle: z.number().min(-1).max(1).default(0),
         steering: z.number().min(-1).max(1).default(0),

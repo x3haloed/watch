@@ -80,7 +80,7 @@ function truncate(content: string, filename: string): string {
   if (content.length <= CONTEXT_FILE_MAX_CHARS) return content;
   const headChars = Math.floor(CONTEXT_FILE_MAX_CHARS * 0.7);
   const tailChars = Math.floor(CONTEXT_FILE_MAX_CHARS * 0.2);
-  return `${content.slice(0, headChars)}\n\n[...truncated ${filename}: kept ${headChars}+${tailChars} of ${content.length} chars. Use read_file to read the full file.]\n\n${content.slice(-tailChars)}`;
+  return `${content.slice(0, headChars)}\n\n[...truncated ${filename}: kept ${headChars}+${tailChars} of ${content.length} chars. read_file returns the full file.]\n\n${content.slice(-tailChars)}`;
 }
 
 function depth(path: string): number {

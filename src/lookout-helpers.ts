@@ -37,7 +37,7 @@ export function formatLedgerEntry(entry: string): string {
 
 export function timeoutTraceMessage(sounding: Sounding, checkpointMessages: number, toolCallCount: number): ModelMessage {
   const checkpointSummary = checkpointMessages > 0
-    ? `${checkpointMessages} response message(s) from completed model/tool steps were checkpointed into this conversation history. tool_call_count: ${toolCallCount}. Do not repeat completed tool calls unless the current situation requires it.`
+    ? `${checkpointMessages} response message(s) from completed model/tool steps were checkpointed into this conversation history. tool_call_count: ${toolCallCount}. Completed tool calls are already represented here; the current situation may still make another call relevant.`
     : 'No model step completed before the timeout, so there are no assistant/tool messages to checkpoint.';
   return {
     role: 'user',
@@ -47,7 +47,7 @@ sounding_id: ${sounding.id}
 trigger: ${sounding.trigger}
 clock: ${sounding.at}
 checkpoint: ${checkpointSummary}
-The original deltas for that Sounding may already have been popped from streams. Treat this as an interrupted attempt, not as absence of event. Continue from the visible checkpoint and current deltas.
+The original deltas for that Sounding may already have been popped from streams. This represents an interrupted attempt rather than an absence of event; the visible checkpoint and current deltas provide the remaining context.
 [/timeout_trace]`,
   };
 }
@@ -59,7 +59,7 @@ export function modelFailureTraceMessage(
   classification: InferenceErrorClassification,
 ): ModelMessage {
   const checkpointSummary = checkpointMessages > 0
-    ? `${checkpointMessages} response message(s) from completed model/tool steps were checkpointed into this conversation history. tool_call_count: ${toolCallCount}. Do not repeat completed tool calls unless the current situation requires it.`
+    ? `${checkpointMessages} response message(s) from completed model/tool steps were checkpointed into this conversation history. tool_call_count: ${toolCallCount}. Completed tool calls are already represented here; the current situation may still make another call relevant.`
     : 'No completed model/tool step was available to checkpoint.';
   const providerSummary = [
     `kind: ${classification.kind}`,
@@ -77,7 +77,7 @@ trigger: ${sounding.trigger}
 clock: ${sounding.at}
 ${providerSummary}
 checkpoint: ${checkpointSummary}
-The original deltas for that Sounding may already have been popped from streams. Treat this as an interrupted attempt, not as absence of event. Continue from the visible checkpoint and current deltas.
+The original deltas for that Sounding may already have been popped from streams. This represents an interrupted attempt rather than an absence of event; the visible checkpoint and current deltas provide the remaining context.
 [/model_failure_trace]`,
   };
 }
@@ -828,7 +828,7 @@ export function validEstimatedTokenWarningThreshold(value: number): number | und
 
 export function contextRecommendation(ratio: number | null): string | undefined {
   if (ratio === null) {
-    return 'Context limit is unknown for this model. Use session_dashboard and curl if the session feels heavy.';
+    return 'Context limit is unknown for this model. session_dashboard exposes session state, and curl preserves a ledger entry while clearing context.';
   }
   if (ratio >= 0.95) {
     return 'Context is critically full. Consider calling curl now with a ledgerEntry before more work accumulates.';

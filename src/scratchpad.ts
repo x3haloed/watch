@@ -48,7 +48,7 @@ export class Scratchpad {
       ok: true,
       agent: fileSnapshot('AGENT.md', this.paths.agentPath, agent, this.paths.agentMaxChars),
       user: fileSnapshot('USER.md', this.paths.userPath, user, this.paths.userMaxChars),
-      note: 'USER.md is user-owned. Use scratchpad_update_agent to update AGENT.md only.',
+      note: 'USER.md is user-owned. scratchpad_update_agent changes AGENT.md; scratchpad tools do not change USER.md.',
     };
   }
 

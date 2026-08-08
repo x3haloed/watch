@@ -116,11 +116,11 @@ ${deltas || '(none)'}
       return '';
     }
     return [
-      'You have a persistent scratchpad across sessions. Save durable facts using scratchpad_update_agent: user preferences from USER.md, environment details, tool quirks, stable conventions, and current orientation that will still matter later.',
-      'Prioritize what reduces future user steering — the most valuable scratchpad note prevents the user from having to correct or remind you again. User preferences and recurring corrections matter more than procedural task details.',
-      'Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO state to AGENT.md. If a fact will be stale in a week, it does not belong there. Use the ledger for testimony/session history.',
-      'Write scratchpad notes as declarative facts, not instructions to yourself. "User prefers concise responses" is good. "Always respond concisely" is not. Imperative phrasing gets re-read as a directive in later sessions.',
-      'USER.md is user-owned. Treat user-notes deltas as notes from the user to you; use scratchpad_read to inspect both files, but update only AGENT.md through the scratchpad tool.',
+      'A persistent scratchpad spans sessions. scratchpad_update_agent replaces AGENT.md with durable facts and orientation, such as user preferences from USER.md, environment details, tool quirks, and stable conventions.',
+      'Notes that reduce future user steering are particularly useful. User preferences and recurring corrections generally retain value longer than procedural task details.',
+      'AGENT.md is intended for durable orientation rather than task progress, session outcomes, completed-work logs, or temporary TODO state. The ledger holds testimony and session history; a fact likely to be stale within a week has little value in AGENT.md.',
+      'Declarative scratchpad notes remain descriptive when re-read in later sessions. For example, "User prefers concise responses" describes a preference, whereas "Always respond concisely" can be interpreted as a directive.',
+      'USER.md is user-owned. scratchpad_read returns both files; scratchpad_update_agent changes AGENT.md and has no USER.md write path.',
     ].join('\n');
   }
 
@@ -145,7 +145,7 @@ ${deltas || '(none)'}
     return `[model_roster]
 resting_model: ${this.input.restingModelId ?? '(none configured)'}
 active_model_restore_policy: Watch may restore the resting model after ${this.input.restAfterNoToolSoundings} Soundings without tool calls. If the resting model cannot fit the current context, Watch will keep the current model and disclose the blocked restore with curl as an option.
-reroute_instruction: If the current Sounding asks for work that exceeds the active model's reasoning strength, parameter scale, or modality support, call handle_with_model immediately with the best model ID. Watch will switch models inside this same Sounding and continue inference after the tool result welcomes the new model.
+reroute_guidance: handle_with_model is available when a Sounding calls for reasoning capacity, parameter scale, or modalities beyond the active model. Watch switches models within the same Sounding and continues inference after the tool result.
 ${lines.join('\n')}
 [/model_roster]`;
   }
@@ -163,7 +163,7 @@ ${lines.join('\n')}
     });
 
     return `[available_skills]
-These are SKILL.md frontmatter summaries discovered under cwd. Use skill_view to load the full instructions before applying a skill.
+These are SKILL.md frontmatter summaries discovered under cwd. skill_view returns a skill's full instructions and linked files.
 ${lines.join('\n')}
 [/available_skills]`;
   }
@@ -191,7 +191,7 @@ used_tokens_estimate: ${fit.usedTokensEstimate}
 required_tokens_estimate: ${fit.requiredTokensEstimate}
 active_model_limit_tokens: ${fit.limitTokens ?? 'unknown'}
 ${fit.recommendation ? `recommendation: ${fit.recommendation}` : 'recommendation: Context is growing. Keep curl available before the session becomes too heavy.'}
-curl_available: Call curl with a ledgerEntry to preserve what matters and clear the current session history.
+curl_available: curl accepts a ledgerEntry and clears the current session history after preserving it.
 [/context_pressure]
 `;
   }

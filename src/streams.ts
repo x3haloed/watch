@@ -335,8 +335,8 @@ export class StreamRegistry {
       subscribed: !stream.isDone(),
       firstChunk,
       next_actions: stream.isDone()
-        ? ['Text stream reached EOF in the first chunk. Call text_stream_open with resumeAtChar to reread from another position.']
-        : [`Future Soundings will include the next chunk. Call text_stream_close with stream "${stream.name}" to stop.`],
+        ? ['Text stream reached EOF in the first chunk. text_stream_open accepts resumeAtChar for another position.']
+        : [`Future Soundings will include the next chunk. text_stream_close with stream "${stream.name}" ends it.`],
     };
   }
 
@@ -411,8 +411,8 @@ export class StreamRegistry {
       subscribed: !stream.isDone(),
       firstChunk,
       next_actions: stream.isDone()
-        ? ['Video stream reached duration end in the first chunk. Call video_stream_open with resumeAtSecond to read from another position.']
-        : [`Future Soundings will include the next video chunks. Call video_stream_close or gaze_remove to stop.`],
+        ? ['Video stream reached duration end in the first chunk. video_stream_open accepts resumeAtSecond for another position.']
+        : ['Future Soundings will include the next video chunks. video_stream_close and gaze_remove end the stream.'],
     };
   }
 
@@ -485,8 +485,8 @@ export class StreamRegistry {
       subscribed: !stream.isDone(),
       firstChunk,
       next_actions: stream.isDone()
-        ? ['Audio stream reached duration end in the first chunk. Call audio_stream_open with resumeAtSecond to read from another position.']
-        : [`Future Soundings will include the next audio chunks. Call audio_stream_close or gaze_remove to stop.`],
+        ? ['Audio stream reached duration end in the first chunk. audio_stream_open accepts resumeAtSecond for another position.']
+        : ['Future Soundings will include the next audio chunks. audio_stream_close and gaze_remove end the stream.'],
     };
   }
 
@@ -573,8 +573,8 @@ export class StreamRegistry {
       subscribed: !stream.isDone(),
       firstChunk,
       next_actions: stream.isDone()
-        ? ['Audio/video stream reached duration end in the first chunk. Call av_stream_open with resumeAtSecond to read from another position.']
-        : [`Future Soundings will include the next audio chunks and video chunks. Call av_stream_close or gaze_remove to stop.`],
+        ? ['Audio/video stream reached duration end in the first chunk. av_stream_open accepts resumeAtSecond for another position.']
+        : ['Future Soundings will include the next audio chunks and video chunks. av_stream_close and gaze_remove end the stream.'],
     };
   }
 

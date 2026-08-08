@@ -6,7 +6,7 @@ export function createTerminalTools(ctx: LookoutToolContext, sounding: Sounding)
   return {
     terminal: tool({
       description:
-        'Run a shell command. Use this for builds, tests, package managers, git, scripts, processes, and network checks. Do not use it for reading/searching/editing files when read_file, search_files, write_file, or patch can do the job. Use background=true only for servers/watchers that keep running. PTY is accepted for interactive tools but may fall back to normal pipes.',
+        'Run a shell command for builds, tests, package managers, git, scripts, processes, and network checks. read_file, search_files, write_file, and patch provide filesystem operations. background=true creates a continuing terminal session, suitable for servers or watchers. PTY is accepted for interactive tools but may fall back to normal pipes.',
       inputSchema: jsonSchema<{
         command: string;
         workdir?: string;
@@ -21,7 +21,7 @@ export function createTerminalTools(ctx: LookoutToolContext, sounding: Sounding)
           command: { type: 'string', description: 'Shell command to execute.' },
           workdir: { type: 'string', description: 'Optional working directory. Relative paths resolve from cwd; absolute paths are accepted.' },
           timeoutMs: { type: 'number', description: 'Timeout in milliseconds. Defaults to 120000.' },
-          background: { type: 'boolean', description: 'Only for servers/watchers that do not exit. Returns a sessionId.' },
+          background: { type: 'boolean', description: 'Creates a continuing session for a command that does not exit, such as a server or watcher. Returns a sessionId.' },
           pty: { type: 'boolean', description: 'Request PTY-like execution for interactive commands. Defaults to false.' },
           yieldTimeMs: { type: 'number', description: 'How long to wait for output before returning. Defaults to 1000.' },
           maxOutputChars: { type: 'number', description: 'Maximum output characters to return. Defaults to 20000.' },

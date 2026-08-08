@@ -4,7 +4,7 @@ import type { LookoutToolContext } from './context.js';
 export function createSkillTools(ctx: LookoutToolContext) {
   return {
     skills_list: tool({
-      description: 'List available SKILL.md skills with short metadata. Use skill_view to load full instructions.',
+      description: "List available SKILL.md skills with short metadata. skill_view returns a skill's full instructions.",
       inputSchema: jsonSchema<{ category?: string }>({
         type: 'object',
         properties: {

@@ -30,7 +30,7 @@ export function createSessionTools(ctx: LookoutToolContext, sounding: Sounding) 
           ledgerEntry: {
             type: 'string',
             description:
-              'Optional text to append to the configured ledger before clearing context and rebooting. Use this to preserve what matters before restart.',
+              'Optional text appended to the configured ledger before context is cleared and Watch re-enters. It preserves context across that restart boundary.',
           },
         },
         additionalProperties: false,
@@ -89,8 +89,8 @@ export function createSessionTools(ctx: LookoutToolContext, sounding: Sounding) 
               context: fit,
               why: `Watch estimates ${fit.usedTokensEstimate} context tokens plus ${fit.maxOutputTokens} reserved output tokens, requiring about ${fit.requiredTokensEstimate} tokens. ${modelId} reports a ${fit.limitTokens} token context window.`,
               options: [
-                'Call curl with a ledgerEntry to preserve what matters and clear the current session history.',
-                'Choose a model with a larger context window.',
+                'curl accepts a ledgerEntry and clears the current session history after preserving it.',
+                'A model with a larger context window can accommodate more session context.',
               ],
             };
           }

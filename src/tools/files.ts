@@ -5,7 +5,7 @@ import type { LookoutToolContext } from './context.js';
 export function createFileTools(ctx: LookoutToolContext) {
   return {
     read_file: tool({
-      description: 'Read a UTF-8 text file with line numbers and pagination. If the path is media, this returns instructions to use open_media instead. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected.',
+      description: 'Read a UTF-8 text file with line numbers and pagination. A media path returns an open_media hint instead. Relative paths resolve from cwd and absolute paths are accepted; paths containing .. are rejected.',
       inputSchema: jsonSchema<{ path: string; offset?: number; limit?: number }>({
         type: 'object',
         properties: {
@@ -20,14 +20,14 @@ export function createFileTools(ctx: LookoutToolContext) {
     }),
     open_media: tool({
       description:
-        'Attach an image, audio file, video, or PDF to the model. Use path for filesystem media, or inboxMessageId + attachmentId for a Discord attachment. If the active model lacks the needed modality, this returns recommended handle_with_model targets.',
+        'Attach an image, audio file, video, or PDF to the model. path identifies filesystem media; inboxMessageId plus attachmentId identifies a Discord attachment. A modality mismatch result includes recommended handle_with_model targets.',
       inputSchema: jsonSchema<{ path?: string; inboxMessageId?: number; attachmentId?: string; url?: string; mediaType?: string; filename?: string }>({
         type: 'object',
         properties: {
           path: { type: 'string', description: 'Filesystem path to media. Relative paths resolve from cwd; absolute paths are accepted.' },
           inboxMessageId: { type: 'number', description: 'Discord inbox message ID containing the attachment.' },
           attachmentId: { type: 'string', description: 'Discord attachment ID from open_message or discord_read_context.' },
-          url: { type: 'string', description: 'Direct media URL. Prefer inboxMessageId + attachmentId for Discord.' },
+          url: { type: 'string', description: 'Direct media URL. Discord attachments can also be identified by inboxMessageId and attachmentId.' },
           mediaType: { type: 'string', description: 'IANA media type for URL media when known.' },
           filename: { type: 'string', description: 'Filename for URL media when known.' },
         },
@@ -38,7 +38,7 @@ export function createFileTools(ctx: LookoutToolContext) {
     }),
     write_file: tool({
       description:
-        'Create a UTF-8 text file. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected. This refuses to overwrite by default. For edits or appends to an existing file, use patch instead. Set overwrite=true only when intentionally replacing the entire file.',
+        'Create a UTF-8 text file. Relative paths resolve from cwd and absolute paths are accepted; paths containing .. are rejected. Existing files are rejected unless overwrite=true. patch supports exact-string changes to an existing file.',
       inputSchema: jsonSchema<{ path: string; content: string; overwrite?: boolean }>({
         type: 'object',
         properties: {
@@ -47,7 +47,7 @@ export function createFileTools(ctx: LookoutToolContext) {
           overwrite: {
             type: 'boolean',
             description:
-              'Defaults to false. Must be true to replace an existing file. Do not use for appends or small edits; use patch.',
+              'Defaults to false. Replacing an existing file succeeds when this is true. patch is available for exact-string changes.',
           },
         },
         required: ['path', 'content'],
@@ -78,7 +78,7 @@ export function createFileTools(ctx: LookoutToolContext) {
       execute: async input => ctx.files.searchFiles(input),
     }),
     patch: tool({
-      description: 'Replace an exact string in a file. Relative paths resolve from cwd; absolute paths are accepted. Paths containing .. are rejected. Use read_file first so old_string matches exactly.',
+      description: 'Replace an exact string in a file. Relative paths resolve from cwd and absolute paths are accepted; paths containing .. are rejected. A patch succeeds when old_string matches the file content.',
       inputSchema: jsonSchema<{ path: string; old_string: string; new_string: string; replace_all?: boolean }>({
         type: 'object',
         properties: {

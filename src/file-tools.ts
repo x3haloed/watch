@@ -48,7 +48,7 @@ export class RepoFileTools {
     if ((await exists(file)) && !overwrite) {
       return {
         ok: false,
-        error: 'File already exists. Use patch for edits/appends, or call write_file with overwrite=true only when intentionally replacing the entire file.',
+        error: 'File already exists. patch supports edits and appends; write_file replaces the file when overwrite=true.',
         path: this.displayPath(file),
         resolvedPath: file,
         cwd: this.cwd,

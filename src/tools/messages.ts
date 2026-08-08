@@ -8,7 +8,7 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
   return {
     open_message: tool({
       description:
-        'Open a message by global ID from an inbox Sounding. Use this when an inbox entry says to call open_message with an ID.',
+        'Open a message by global ID from an inbox Sounding. Inbox entries identify messages by the ID accepted here.',
       inputSchema: jsonSchema<{ id: number }>({
         type: 'object',
         properties: {
@@ -30,7 +30,7 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
           return {
             ok: false,
             error: `Message not found: ${id}`,
-            hint: 'The id may be stale or from a previous daemon run. Call message_page with medium "cli" or "discord" to list currently available message ids.',
+            hint: 'The id may be stale or from a previous daemon run. message_page lists currently available message IDs for medium "cli" or "discord".',
           };
         }
         const attachments = readDiscordAttachments(message.metadata);
@@ -59,7 +59,7 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
     }),
     message_page: tool({
       description:
-        'List messages from a medium in pages. Returns IDs/previews only. Use open_message with an ID to read a full message.',
+        'List messages from a medium in pages. Results contain IDs and previews; open_message expands an ID into its full message.',
       inputSchema: jsonSchema<{ medium: string; page?: number; pageSize?: number }>({
         type: 'object',
         properties: {
@@ -76,8 +76,8 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
           ok: true,
           medium,
           ...result,
-          hint: 'Call open_message with an id to read a full message.',
-          nextPageHint: result.page < result.totalPages ? `Call message_page with medium "${medium}" and page ${result.page + 1} for the next page.` : undefined,
+          hint: 'open_message expands an ID into a full message.',
+          nextPageHint: result.page < result.totalPages ? `message_page accepts medium "${medium}" and page ${result.page + 1} for the next page.` : undefined,
         };
       },
     }),
@@ -107,7 +107,7 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
     }),
     send_message: tool({
       description:
-        'Send a user-facing message to an external medium. Use this for communication; final assistant text is private working speech and is not routed to the user.',
+        'Send a user-facing message to an external medium. This is the external delivery path; final assistant text is private working speech and is not routed to the user.',
       inputSchema: jsonSchema<{ medium: string; message: string; replyToId?: number | string; channelId?: string; attachments?: string[] }>({
         type: 'object',
         properties: {

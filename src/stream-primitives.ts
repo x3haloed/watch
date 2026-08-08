@@ -95,7 +95,7 @@ export class InboxStream implements WatchStream {
               subject: message.subject,
               receivedAt: message.receivedAt,
               preview: inboxDeltaPreview(message),
-              hint: `Call open_message with id ${message.id} to read the full message. To reply after reading, call send_message with medium "${message.medium}" and replyToId ${message.id}. For proactive Discord posting, use send_message with medium "discord" and a channelId.`,
+              hint: `open_message expands id ${message.id} into the full message. send_message accepts medium "${message.medium}" and replyToId ${message.id} for a reply; proactive Discord posts have medium "discord" and a channelId.`,
             }),
           ]
         : [];
@@ -327,7 +327,7 @@ export class TextFileStream implements WatchStream {
       chunk,
       hint: done
         ? 'Text stream reached EOF and will be removed from gaze.'
-        : `Next Sounding will include chars ${this.nextChar}-${Math.min(this.content.length, this.nextChar + this.charsPerSounding)}. Call text_stream_close or gaze_remove to stop.`,
+        : `Next Sounding will include chars ${this.nextChar}-${Math.min(this.content.length, this.nextChar + this.charsPerSounding)}. text_stream_close and gaze_remove end this stream.`,
     };
   }
 
@@ -945,7 +945,7 @@ export class AudioFileStream implements WatchStream {
         done,
         hint: done
           ? 'Audio stream reached end and will be removed from gaze.'
-          : `Next Sounding will include audio chunk. Call audio_stream_close or gaze_remove to stop.`,
+          : `Next Sounding will include audio chunk. audio_stream_close and gaze_remove end this stream.`,
       },
     };
   }
@@ -1066,7 +1066,7 @@ export class VideoFileStream implements WatchStream {
         ...video,
         hint: done
           ? 'Video stream reached end and will be removed from gaze.'
-          : `Next Sounding will include video chunks. Call video_stream_close or gaze_remove to stop.`,
+          : `Next Sounding will include video chunks. video_stream_close and gaze_remove end this stream.`,
       },
     };
   }
@@ -1227,7 +1227,7 @@ export class AudioVideoFileStream implements WatchStream {
         video,
         hint: done
           ? 'Audio/video stream reached end and will be removed from gaze.'
-          : `Next Sounding will include audio chunk and video chunks. Call av_stream_close or gaze_remove to stop.`,
+          : `Next Sounding will include audio chunk and video chunks. av_stream_close and gaze_remove end this stream.`,
       }),
     };
   }

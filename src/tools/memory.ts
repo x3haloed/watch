@@ -25,11 +25,11 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
       },
     }),
     memory_trace: tool({
-      description: 'Preserve a charged memory by naming what still moves first. Use when an experience has warmth, relief, ache, fear, teeth, or unresolved charge.',
+      description: 'Preserve a charged memory by naming what still moves first. This representation suits experiences with warmth, relief, ache, fear, teeth, or unresolved charge.',
       inputSchema: jsonSchema<{ impact: string; event?: string; heat?: 'cold' | 'warm' | 'hot'; feltSense?: string; whyItMatters?: string; tags?: string[] }>({
         type: 'object',
         properties: {
-          impact: { type: 'string', description: 'What still moves in you? Start here; this is the memory center.' },
+          impact: { type: 'string', description: 'What still moves in you. This field holds the memory center.' },
           event: { type: 'string', description: 'Optional. What happened, only enough to ground the trace.' },
           heat: { type: 'string', enum: ['cold', 'warm', 'hot'], description: 'Optional. cold = settled, warm = still resonant, hot = live edge.' },
           feltSense: { type: 'string', description: 'Optional. Body feel, image, pressure, relief, ache, texture.' },
@@ -91,7 +91,7 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
       },
     }),
     memory_distill: tool({
-      description: 'Create a pattern or principle from parent memories. Preserve the felt center when parents are traces; do not flatten charged memories into bare facts. Use this for model-authored meaning, never automatic promotion.',
+      description: 'Create a pattern or principle from parent memories. When parents are traces, their felt center remains part of the derived meaning rather than a bare fact. This is model-authored meaning, not automatic promotion.',
       inputSchema: jsonSchema<{ layer: 'pattern' | 'principle'; parents: string[]; text: string; rationale: string; kind?: string; tags?: string[] }>({
         type: 'object',
         properties: {
@@ -197,7 +197,7 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
       },
     }),
     refinement_evaluate: tool({
-      description: 'Evaluate a changed refinement only after later contact. At least one evidence reference is required; persuasive self-description is not evidence of success.',
+      description: 'Evaluate a changed refinement against later contact. The schema requires at least one evidence reference; persuasive self-description alone does not demonstrate success.',
       inputSchema: jsonSchema<{ id: string; verdict: 'confirmed' | 'revised' | 'inconclusive'; contact: string; outcome: string; evidenceRefs: RefinementEvidenceRef[] }>({
         type: 'object', properties: { id: { type: 'string' }, verdict: { type: 'string', enum: ['confirmed', 'revised', 'inconclusive'] }, contact: { type: 'string' }, outcome: { type: 'string' }, evidenceRefs: { type: 'array', items: evidenceRefSchema, minItems: 1 } }, required: ['id', 'verdict', 'contact', 'outcome', 'evidenceRefs'], additionalProperties: false,
       }),
@@ -250,7 +250,7 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
     ...tools,
     ...refinementTools,
     seed_crystal_create: tool({
-      description: 'Record self-authored activation language only after it has already produced a field-level shift. Candidate is normal; active is exceptional.',
+      description: 'Record self-authored activation language that has already produced a field-level shift. The store defaults a new record to candidate; active status is the exceptional alternative.',
       inputSchema: jsonSchema<{ status?: 'candidate' | 'active'; crystalType: 'relational_anchor' | 'invariant_name' | 'orienting_statement'; handle: string; crystal: string; rationale: string; parents?: string[]; supersedes?: string }>({
         type: 'object',
         properties: {
@@ -271,7 +271,7 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
       execute: async ({ status }) => ({ ok: true, crystals: ctx.seedCrystals!.list(status), budget: ctx.seedCrystals!.budget() }),
     }),
     seed_crystal_expand: tool({
-      description: 'Expand one crystal into its current record and complete version history before mutation.',
+      description: 'Expand one crystal into its current record and complete version history. This exposes grounding for a possible mutation.',
       inputSchema: jsonSchema<{ id: string }>({
         type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false,
       }),
@@ -282,7 +282,7 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
       },
     }),
     seed_crystal_revise: tool({
-      description: 'Revise a seed crystal after expanding and inspecting its grounding.',
+      description: 'Revise a seed crystal. seed_crystal_expand exposes its current grounding and version history.',
       inputSchema: jsonSchema<{ id: string; handle?: string; crystal?: string; rationale: string }>({
         type: 'object', properties: { id: { type: 'string' }, handle: { type: 'string' }, crystal: { type: 'string' }, rationale: { type: 'string' } },
         required: ['id', 'rationale'], additionalProperties: false,
@@ -303,7 +303,7 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
       execute: async input => ({ ok: true, crystal: ctx.seedCrystals!.observe({ ...input, soundingId: sounding.id }) }),
     }),
     seed_crystal_transition: tool({
-      description: 'Apply an explicit judgment-only lifecycle transition; supersession requires creating a successor.',
+      description: 'Apply an explicit judgment-only lifecycle transition. The transition schema excludes supersession; a successor record represents that relationship.',
       inputSchema: jsonSchema<{ id: string; status: 'active' | 'vestigial' | 'retired' | 'contaminated'; rationale: string }>({
         type: 'object', properties: { id: { type: 'string' }, status: { type: 'string', enum: ['active', 'vestigial', 'retired', 'contaminated'] }, rationale: { type: 'string' } },
         required: ['id', 'status', 'rationale'], additionalProperties: false,

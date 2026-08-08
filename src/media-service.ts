@@ -71,7 +71,7 @@ export class MediaService {
         media: descriptor,
         recommendedModels,
         next_actions: recommendedModels.length
-          ? [`Call handle_with_model with modelId "${recommendedModels[0]}", then call open_media again.`]
+          ? [`handle_with_model can select "${recommendedModels[0]}"; open_media can then be retried with that model.`]
           : ['No configured model currently advertises support for this modality. Add one to config.json or choose a different media item.'],
       };
     }
@@ -82,7 +82,7 @@ export class MediaService {
         ok: false,
         error: providerSupport.reason,
         media: descriptor,
-        next_actions: ['Use a different media format, or configure a provider adapter that can serialize this media type.'],
+        next_actions: ['A different media format or a provider adapter that serializes this media type can make it available.'],
       };
     }
 

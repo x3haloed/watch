@@ -62,7 +62,7 @@ export class TerminalTools {
         status: 'running',
         sessionId: session.id,
         pid: session.process.pid,
-        hint: 'Use terminal_input with this sessionId to poll, write stdin, or kill the process.',
+        hint: 'terminal_input accepts this sessionId for polling, stdin input, and process termination.',
       };
     }
 
@@ -117,7 +117,7 @@ export class TerminalTools {
       sessionId: session.id,
       exitCode: session.exitCode,
       output: truncate(cleanTerminalText(session.output), maxOutputChars),
-      hint: session.exited ? undefined : 'Call terminal_input again to poll, write more input, or kill the process.',
+      hint: session.exited ? undefined : 'terminal_input can poll this session, write more input, or terminate the process.',
     };
   }
 

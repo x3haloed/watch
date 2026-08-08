@@ -5,7 +5,7 @@ export function createScratchpadTools(ctx: LookoutToolContext) {
   return {
     scratchpad_read: tool({
       description:
-        'Read the persistent scratchpad. AGENT.md is your current durable orientation; USER.md is notes from the user to you. USER.md is user-owned and cannot be modified through scratchpad tools.',
+        'Read the persistent scratchpad. AGENT.md contains durable orientation and USER.md contains user notes. USER.md is user-owned; scratchpad tools expose no USER.md modification operation.',
       inputSchema: jsonSchema<Record<string, never>>({
         type: 'object',
         properties: {},
@@ -15,11 +15,11 @@ export function createScratchpadTools(ctx: LookoutToolContext) {
     }),
     scratchpad_update_agent: tool({
       description:
-        'Replace AGENT.md, your persistent scratchpad across sessions. Save durable facts and current orientation that will still matter later: user preferences from USER.md, environment details, tool quirks, stable conventions, and reminders that reduce future user steering. Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO state. If a fact will be stale in a week, it does not belong in AGENT.md. Use the ledger for testimony/session history. Write notes as declarative facts, not instructions to yourself. The result reads back the final saved AGENT.md content so you can verify the write stuck. This tool cannot modify USER.md.',
+        'Replace AGENT.md, the persistent cross-session scratchpad. Its useful contents are durable facts and orientation: user preferences from USER.md, environment details, tool quirks, stable conventions, and reminders that reduce future user steering. Task progress, session outcomes, completed-work logs, and temporary TODO state are short-lived material; the ledger holds testimony and session history. Declarative notes remain descriptive on later reads. The result includes the final saved AGENT.md content. This tool has no USER.md modification operation.',
       inputSchema: jsonSchema<{ content: string }>({
         type: 'object',
         properties: {
-          content: { type: 'string', description: 'Complete replacement content for AGENT.md. Keep it compact, current, and declarative.' },
+          content: { type: 'string', description: 'Complete replacement content for AGENT.md. Compact, current, declarative content fits its cross-session role.' },
         },
         required: ['content'],
         additionalProperties: false,

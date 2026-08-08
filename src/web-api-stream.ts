@@ -192,7 +192,7 @@ function formatTinyplacePayload(base: JsonObject, url: string, previousBody: unk
     changedCount: previous ? diff.length : undefined,
     changedPixels: previous ? diff : undefined,
     hint: previous
-      ? 'Tinyplace changed pixels are listed as x/y/from/to. Call open_media with the canvas PNG URL on an image-capable model to inspect the full board visually.'
+      ? 'Tinyplace changed pixels are listed as x/y/from/to. open_media can attach the canvas PNG URL for visual inspection on an image-capable model.'
       : 'Initial Tinyplace baseline captured. Future deltas will list changed pixels.',
   });
 }

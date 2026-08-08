@@ -17,7 +17,7 @@ export function createDiscordTools(ctx: LookoutToolContext) {
     }),
     discord_read_context: tool({
       description:
-        'Read a stable Discord message window for more context. Prefer inboxMessageId from an opened Discord inbox message. Returns chronological messages plus ready-made older/newer continuation args.',
+        'Read a stable Discord message window for more context. inboxMessageId identifies an opened Discord inbox message. Results are chronological and include older/newer continuation arguments.',
       inputSchema: jsonSchema<{
         inboxMessageId?: number;
         channelId?: string;
@@ -48,7 +48,7 @@ export function createDiscordTools(ctx: LookoutToolContext) {
     }),
     discord_mute: tool({
       description:
-        'Stop Discord delivery for a scope. Use kind dms, mentions, replies, or reactions for default surfaces; use guild, channel, thread, or user with id for specific muting.',
+        'Stop Discord delivery for a scope. dms, mentions, replies, and reactions identify default surfaces; guild, channel, thread, and user scopes include an id.',
       inputSchema: jsonSchema<{ kind: string; id?: string }>({
         type: 'object',
         properties: {
@@ -65,7 +65,7 @@ export function createDiscordTools(ctx: LookoutToolContext) {
     }),
     discord_unmute: tool({
       description:
-        'Restore Discord delivery for a muted scope. Use kind dms, mentions, replies, or reactions for default surfaces; use guild, channel, thread, or user with id for specific muting.',
+        'Restore Discord delivery for a muted scope. dms, mentions, replies, and reactions identify default surfaces; guild, channel, thread, and user scopes include an id.',
       inputSchema: jsonSchema<{ kind: string; id?: string }>({
         type: 'object',
         properties: {

@@ -646,10 +646,10 @@ function kindForScope(scope: MoltbookScopeSnapshot): string {
 }
 
 function hintForScope(scope: MoltbookScopeSnapshot): string {
-  if (scope.type === 'home') return 'Call moltbook_read with kind "home" or a suggested post/comments read to inspect details.';
-  if (scope.type === 'post') return 'Call moltbook_read with kind "comments" and this postId for the full conversation.';
-  if (scope.type === 'user') return 'Call moltbook_read with kind "profile" and this name for the full profile.';
-  return 'Call moltbook_read with the relevant kind to inspect full details.';
+  if (scope.type === 'home') return 'moltbook_read with kind "home", post, or comments returns the corresponding details.';
+  if (scope.type === 'post') return 'moltbook_read with kind "comments" and this postId returns the full conversation.';
+  if (scope.type === 'user') return 'moltbook_read with kind "profile" and this name returns the full profile.';
+  return 'moltbook_read with a relevant kind returns full details.';
 }
 
 function readHint(scope: MoltbookScopeSnapshot, item: JsonObject): string | undefined {
