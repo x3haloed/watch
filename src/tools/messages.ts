@@ -107,7 +107,7 @@ export function createMessageTools(ctx: LookoutToolContext, sounding: Sounding) 
     }),
     send_message: tool({
       description:
-        'Send a user-facing message to an external medium. This is the external delivery path; final assistant text is private working speech and is not routed to the user.',
+        'Send a user-facing message to an external medium. This is Watch’s built-in/traced delivery path; final assistant text is private working speech and is not routed to the user.',
       inputSchema: jsonSchema<{ medium: string; message: string; replyToId?: number | string; channelId?: string; attachments?: string[] }>({
         type: 'object',
         properties: {
