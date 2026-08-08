@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { refinementsPath } from './paths.js';
 
 export type RefinementStatus = 'proposed' | 'awaiting_contact' | 'confirmed' | 'revised' | 'rolled_back' | 'inconclusive' | 'relinquished';
@@ -25,6 +25,16 @@ export type RefinementCase = {
 export type CreateRefinementInput = Pick<RefinementCase, 'trigger' | 'targetRef' | 'hypothesis' | 'testCondition' | 'authorship'> & { evidenceRefs?: RefinementEvidenceRef[] };
 
 const TERMINAL_STATUSES = new Set<RefinementStatus>(['confirmed', 'revised', 'rolled_back', 'relinquished']);
+
+export function resolveFileEvidence(instanceRoot: string, path: string): RefinementEvidenceResolution {
+  try {
+    return statSync(resolve(instanceRoot, path)).isFile()
+      ? { resolved: true }
+      : { resolved: false, reason: 'file not found or not a regular file' };
+  } catch {
+    return { resolved: false, reason: 'file not found or not a regular file' };
+  }
+}
 
 export class RefinementStore {
   private readonly path: string;

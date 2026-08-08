@@ -6,8 +6,23 @@ import type { ControlRequest, ControlResponse, WatchConfig, SseStreamConfig } fr
 import { WatchRuntime } from './runtime.js';
 import { EventLog } from './event-log.js';
 import { startCompanionHost, type CompanionHost } from './companion-host.js';
+import { redactDiagnosticText } from './daemon-lifecycle.js';
 
 export async function runDaemon(config: WatchConfig): Promise<void> {
+  const fatalLog = new EventLog(config.instanceRoot);
+  const observeFatalError = (error: Error) => {
+    try {
+      fatalLog.append({
+        type: 'daemon_fatal_error',
+        at: new Date().toISOString(),
+        pid: process.pid,
+        error: redactDiagnosticText(error.stack ?? error.message),
+      });
+    } catch {
+      // Observation must never change the process's fatal-error behavior.
+    }
+  };
+  process.on('uncaughtExceptionMonitor', observeFatalError);
   const path = socketPath(config.instanceRoot);
   const lock = acquireDaemonLock(config.instanceRoot);
   process.once('exit', () => lock.release());
@@ -39,10 +54,16 @@ export async function runDaemon(config: WatchConfig): Promise<void> {
     }
     removeSocket(path);
     lock.release();
+    process.off('uncaughtExceptionMonitor', observeFatalError);
+    let exitCode = 0;
     if (restart) {
-      spawnReplacementDaemon(config.cloneRoot);
+      const plan = daemonRestartPlan(process.env);
+      if (plan.spawnReplacement) {
+        spawnReplacementDaemon(config.cloneRoot);
+      }
+      exitCode = plan.exitCode;
     }
-    process.exit(0);
+    process.exit(exitCode);
   }
 
   try {
@@ -80,8 +101,18 @@ export async function runDaemon(config: WatchConfig): Promise<void> {
     await companionHost?.close();
     removeSocket(path);
     lock.release();
+    process.off('uncaughtExceptionMonitor', observeFatalError);
     throw error;
   }
+}
+
+export function daemonRestartPlan(env: NodeJS.ProcessEnv): { spawnReplacement: boolean; exitCode: number } {
+  if (env.INVOCATION_ID?.trim()) {
+    // systemd owns the cgroup. A non-zero exit delegates the restart to
+    // Restart=on-failure without turning an intentional stop into a restart.
+    return { spawnReplacement: false, exitCode: 75 };
+  }
+  return { spawnReplacement: true, exitCode: 0 };
 }
 
 type DaemonLock = {

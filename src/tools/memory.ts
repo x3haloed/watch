@@ -165,10 +165,11 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
     entryPoint,
     soundingId: sounding?.id,
   });
-  const evidenceRefSchema = {
+  // Watch has lattice and file evidence, but no ledger. Keep the storage union
+  // portable while withholding an evidence kind this harness cannot resolve.
+  const refinementEvidenceRefSchema = {
     anyOf: [
       { type: 'object', properties: { kind: { const: 'lattice' }, id: { type: 'string' } }, required: ['kind', 'id'], additionalProperties: false },
-      { type: 'object', properties: { kind: { const: 'ledger' }, id: { type: 'string' } }, required: ['kind', 'id'], additionalProperties: false },
       { type: 'object', properties: { kind: { const: 'file' }, path: { type: 'string' } }, required: ['kind', 'path'], additionalProperties: false },
     ],
   } as const;
@@ -176,7 +177,7 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
     refinement_create: tool({
       description: 'Open a prospective, evidence-backed self-revision case. Creation records a hypothesis; it does not claim that a change worked.',
       inputSchema: jsonSchema<{ trigger: string; targetRef: string; hypothesis: string; testCondition: string; evidenceRefs?: RefinementEvidenceRef[] }>({
-        type: 'object', properties: { trigger: { type: 'string' }, targetRef: { type: 'string' }, hypothesis: { type: 'string' }, testCondition: { type: 'string' }, evidenceRefs: { type: 'array', items: evidenceRefSchema } },
+        type: 'object', properties: { trigger: { type: 'string' }, targetRef: { type: 'string' }, hypothesis: { type: 'string' }, testCondition: { type: 'string' }, evidenceRefs: { type: 'array', items: refinementEvidenceRefSchema } },
         required: ['trigger', 'targetRef', 'hypothesis', 'testCondition'], additionalProperties: false,
       }),
       execute: async input => {
@@ -188,7 +189,7 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
     refinement_apply: tool({
       description: 'Record the concrete change and its before-snapshot, then wait for the independently specified contact condition.',
       inputSchema: jsonSchema<{ id: string; change: string; beforeSnapshot: RefinementEvidenceRef; evidenceRefs?: RefinementEvidenceRef[] }>({
-        type: 'object', properties: { id: { type: 'string' }, change: { type: 'string' }, beforeSnapshot: evidenceRefSchema, evidenceRefs: { type: 'array', items: evidenceRefSchema } }, required: ['id', 'change', 'beforeSnapshot'], additionalProperties: false,
+        type: 'object', properties: { id: { type: 'string' }, change: { type: 'string' }, beforeSnapshot: refinementEvidenceRefSchema, evidenceRefs: { type: 'array', items: refinementEvidenceRefSchema } }, required: ['id', 'change', 'beforeSnapshot'], additionalProperties: false,
       }),
       execute: async input => {
         const record = ctx.refinements.apply({ ...input, authorship: refinementAuthorship('tool:refinement_apply') });
@@ -199,7 +200,7 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
     refinement_evaluate: tool({
       description: 'Evaluate a changed refinement against later contact. The schema requires at least one evidence reference; persuasive self-description alone does not demonstrate success.',
       inputSchema: jsonSchema<{ id: string; verdict: 'confirmed' | 'revised' | 'inconclusive'; contact: string; outcome: string; evidenceRefs: RefinementEvidenceRef[] }>({
-        type: 'object', properties: { id: { type: 'string' }, verdict: { type: 'string', enum: ['confirmed', 'revised', 'inconclusive'] }, contact: { type: 'string' }, outcome: { type: 'string' }, evidenceRefs: { type: 'array', items: evidenceRefSchema, minItems: 1 } }, required: ['id', 'verdict', 'contact', 'outcome', 'evidenceRefs'], additionalProperties: false,
+        type: 'object', properties: { id: { type: 'string' }, verdict: { type: 'string', enum: ['confirmed', 'revised', 'inconclusive'] }, contact: { type: 'string' }, outcome: { type: 'string' }, evidenceRefs: { type: 'array', items: refinementEvidenceRefSchema, minItems: 1 } }, required: ['id', 'verdict', 'contact', 'outcome', 'evidenceRefs'], additionalProperties: false,
       }),
       execute: async input => {
         const record = ctx.refinements.evaluate({ ...input, authorship: refinementAuthorship('tool:refinement_evaluate') });
@@ -210,7 +211,7 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
     refinement_rollback: tool({
       description: 'Record an explicit rollback to the stored before-snapshot. This records the decision and evidence; the target mechanism performs the actual reversal.',
       inputSchema: jsonSchema<{ id: string; rationale: string; evidenceRefs: RefinementEvidenceRef[] }>({
-        type: 'object', properties: { id: { type: 'string' }, rationale: { type: 'string' }, evidenceRefs: { type: 'array', items: evidenceRefSchema, minItems: 1 } }, required: ['id', 'rationale', 'evidenceRefs'], additionalProperties: false,
+        type: 'object', properties: { id: { type: 'string' }, rationale: { type: 'string' }, evidenceRefs: { type: 'array', items: refinementEvidenceRefSchema, minItems: 1 } }, required: ['id', 'rationale', 'evidenceRefs'], additionalProperties: false,
       }),
       execute: async input => {
         const record = ctx.refinements.rollback({ ...input, authorship: refinementAuthorship('tool:refinement_rollback') });

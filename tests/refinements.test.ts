@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { MemoryLattice } from '../src/memory-lattice.js';
-import { RefinementStore, type RefinementEvidenceRef } from '../src/refinements.js';
+import { RefinementStore, resolveFileEvidence, type RefinementEvidenceRef } from '../src/refinements.js';
 import { createMemoryTools } from '../src/tools/memory.js';
 import type { LookoutToolContext } from '../src/tools/context.js';
 
@@ -19,6 +19,16 @@ function harness() {
 }
 
 const authorship = { authorKind: 'agent' as const, profileId: 'test', model: 'test-model', entryPoint: 'test' };
+
+test('file evidence resolves only regular files', () => {
+  const root = mkdtempSync(join(tmpdir(), 'watch-refinement-evidence-'));
+  try {
+    assert.equal(resolveFileEvidence(root, '.').resolved, false);
+    assert.equal(resolveFileEvidence(root, 'missing.json').resolved, false);
+    writeFileSync(join(root, 'contact.json'), '{}');
+    assert.equal(resolveFileEvidence(root, 'contact.json').resolved, true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test('refinements stay prospective, evidenced, and append-only', () => {
   const { root, memory, refinements } = harness();
@@ -67,5 +77,9 @@ test('memory tools expose the prospective refinement contract', () => {
     assert.match(String(tools.refinement_create.description), /does not claim that a change worked/);
     assert.match(String(tools.refinement_evaluate.description), /later contact/);
     assert.match(String(tools.refinement_rollback.description), /actual reversal/);
+    const createSchema = JSON.stringify(tools.refinement_create.inputSchema);
+    assert.match(createSchema, /lattice/);
+    assert.match(createSchema, /file/);
+    assert.doesNotMatch(createSchema, /ledger/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

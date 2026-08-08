@@ -43,6 +43,10 @@ export function daemonLockPath(instanceRoot: string): string {
   return join(stateDir(instanceRoot), 'daemon.lock');
 }
 
+export function daemonLifecyclePath(instanceRoot: string): string {
+  return join(stateDir(instanceRoot), 'daemon-lifecycle.json');
+}
+
 export function eventLogPath(instanceRoot: string): string {
   return join(logsDir(instanceRoot), 'events.jsonl');
 }

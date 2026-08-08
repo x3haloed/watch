@@ -12,6 +12,7 @@ import { resolveStreamConfigs } from './stream-config.js';
 import { classifyInferenceError, type InferenceErrorClassification } from './lookout-helpers.js';
 import { captureInputFromWatchEvent, MemoryLattice } from './memory-lattice.js';
 import { deriveResidentPresence, isToolActivityEvent } from './presence.js';
+import { DaemonLifecycleStore, type DaemonLifecycleSnapshot } from './daemon-lifecycle.js';
 
 const MODEL_FAILURE_BACKOFF_BASE_MS = 30_000;
 const MODEL_FAILURE_BACKOFF_MAX_MS = 5 * 60_000;
@@ -47,11 +48,15 @@ export class WatchRuntime {
   private collectingSteering = false;
   private toolActivityUntil = 0;
   private toolActivityTimer: NodeJS.Timeout | undefined;
+  private readonly lifecycle: DaemonLifecycleStore;
+  private lifecycleHeartbeatTimer: NodeJS.Timeout | undefined;
+  private lifecycleSnapshot: DaemonLifecycleSnapshot | undefined;
 
   constructor(private readonly config: WatchConfig, private readonly requestReboot: (source: 'tool' | 'control') => void = () => {}) {
     this.gazeStore = new GazeStore(config.instanceRoot);
     this.scratchpad = config.scratchpad.enabled === false ? undefined : new Scratchpad(config.instanceRoot, config.scratchpad);
     this.log = new EventLog(config.instanceRoot);
+    this.lifecycle = new DaemonLifecycleStore(config.instanceRoot);
     this.memory = new MemoryLattice(config.instanceRoot);
     this.log.subscribe(event => this.captureEventEpisode(event));
     const streamDefinitions = config.streams ?? resolveStreamConfigs(config);
@@ -116,6 +121,20 @@ export class WatchRuntime {
       return;
     }
     this.running = true;
+    const lifecycle = this.lifecycle.begin(process.pid);
+    this.lifecycleSnapshot = lifecycle.current;
+    if (lifecycle.previous) {
+      this.log.append({
+        type: 'daemon_previous_exit_unobserved',
+        at: lifecycle.current.startedAt,
+        previousPid: lifecycle.previous.pid,
+        startedAt: lifecycle.previous.startedAt,
+        lastHeartbeatAt: lifecycle.previous.lastHeartbeatAt,
+      });
+    }
+    this.lifecycleHeartbeatTimer = setInterval(() => {
+      this.lifecycleSnapshot = this.lifecycle.heartbeat();
+    }, 30_000);
     this.syncPresence();
     this.log.append({ type: 'daemon_started', at: new Date().toISOString(), pid: process.pid, config: this.config });
     void this.discord.start();
@@ -127,6 +146,8 @@ export class WatchRuntime {
 
   async stop(reason = 'control request'): Promise<void> {
     this.running = false;
+    if (this.lifecycleHeartbeatTimer) clearInterval(this.lifecycleHeartbeatTimer);
+    this.lifecycleHeartbeatTimer = undefined;
     if (this.toolActivityTimer) clearTimeout(this.toolActivityTimer);
     this.toolActivityTimer = undefined;
     this.toolActivityUntil = 0;
@@ -139,6 +160,7 @@ export class WatchRuntime {
     this.streams.stop(reason);
     await this.discord.stop(reason);
     this.moltbook.stop();
+    this.lifecycleSnapshot = this.lifecycle.stop(reason);
     this.log.append({ type: 'daemon_stopped', at: new Date().toISOString(), pid: process.pid, reason });
   }
 
@@ -154,6 +176,11 @@ export class WatchRuntime {
     return {
       pid: process.pid,
       running: this.running,
+      readiness: {
+        state: this.running ? 'ready' : 'stopped',
+        ready: this.running,
+        lifecycle: this.lifecycleSnapshot ?? this.lifecycle.snapshot(),
+      },
       modelId: this.lookout.modelId,
       restingModelId: this.restingModelId,
       restAfterNoToolSoundings: this.config.restAfterNoToolSoundings,
@@ -167,7 +194,6 @@ export class WatchRuntime {
       moltbook: this.moltbook.getAttention(),
       gazeState: this.gazeStore.snapshot(),
       scratchpad: this.scratchpad?.read() ?? { ok: false, enabled: false },
-      memory: { recent: this.memory.recent(10) },
       minCffMs: this.config.minCffMs,
       maxCffMs: this.config.maxCffMs,
       modelTimeoutMs: this.config.modelTimeoutMs,
@@ -180,6 +206,20 @@ export class WatchRuntime {
       modelBackoffUntil: this.modelBackoffUntil > Date.now() ? new Date(this.modelBackoffUntil).toISOString() : undefined,
       pendingDeltas: this.streams.hasPending(),
     };
+  }
+
+  recentMemory(limit = 40): Array<Record<string, unknown>> {
+    return this.memory.recent(limit).map(r => ({
+      id: r.id,
+      layer: r.layer,
+      kind: r.kind,
+      summary: r.summary,
+      text: r.text.slice(0, 500),
+      confidence: r.confidence,
+      status: r.status,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    }));
   }
 
   enqueueInboxMessage(message: string, source = 'cli', metadata?: JsonObject): { accepted: boolean } {

@@ -78,6 +78,11 @@ async function routeRequest(
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/memory/recent') {
+    sendJson(response, 200, { entries: runtime.recentMemory(40) });
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/conversation') {
     sendJson(response, 200, { messages: conversationFromEvents(runtime.eventTail(600)).slice(-100) });
     return;
