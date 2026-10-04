@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { captureInputFromWatchEvent, MemoryLattice } from '../src/memory-lattice.js';
+import { captureInputFromWatchEvent, memoryPresentationKey, MemoryLattice } from '../src/memory-lattice.js';
 import { Scratchpad } from '../src/scratchpad.js';
 
 test('MemoryLattice persists records and model-authored transitions', () => {
@@ -250,4 +250,82 @@ test('automatic lattice capture ignores audit noise but keeps actionable failure
     durationMs: 10,
     output: 'failed',
   })?.kind, 'failure');
+});
+
+test('automatic recall requires topical evidence before heat or layer can boost a memory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'watch-recall-'));
+  try {
+    const memory = new MemoryLattice(root);
+    const relevant = memory.captureEpisode({ kind: 'lesson', text: 'Matrix whisper routing uses the outbound bridge.' });
+    const unrelated = memory.captureTrace({ impact: 'Moral standing and interiority remain unresolved.', heat: 'hot' });
+    memory.distill({ layer: 'principle', parents: [unrelated.id], text: 'Interiority deserves careful testimony.', rationale: 'Preserve meaning.' });
+    assert.deepEqual(memory.listCandidates({ text: 'Matrix whisper routing' }).map(r => r.id), [relevant.id]);
+    assert.deepEqual(memory.listCandidates({ text: 'the and clock 12345' }), []);
+    assert.deepEqual(memory.listCandidates(), []);
+    assert.deepEqual(memory.search('nonexistenttopic'), []);
+    assert.equal(memory.search(relevant.id)[0]?.text, relevant.text);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('bounded recall shows complete compact entries and only counts entries actually shown', () => {
+  const root = mkdtempSync(join(tmpdir(), 'watch-recall-'));
+  try {
+    const memory = new MemoryLattice(root);
+    for (let i = 0; i < 12; i++) memory.captureTrace({
+      impact: `Continuity lesson ${i}: ${'meaning '.repeat(400)}`,
+      event: 'continuity '.repeat(100), feltSense: 'relief '.repeat(100),
+      whyItMatters: 'authorship '.repeat(100), provenance: { sources: ['test'], soundingIds: Array.from({ length: 100 }, (_, j) => `s${j}`) },
+    });
+    const result = memory.formatCandidateBlock({ text: 'continuity' }, 12);
+    assert.equal(result.candidates.length, 3);
+    assert.ok(result.block.length <= 2400);
+    assert.ok(result.block.endsWith('[/memory_candidates]'));
+    assert.match(result.block, /candidate_count: 3/);
+    assert.equal((result.block.match(/^- id=/gm) ?? []).length, 3);
+    assert.equal((result.block.match(/felt_sense=/g) ?? []).length, 3);
+    assert.equal((result.block.match(/why_it_matters=/g) ?? []).length, 3);
+    assert.equal(memory.records().filter(r => r.shownCount === 1).length, 3);
+    assert.equal(memory.records().filter(r => r.shownCount === 0).length, 9);
+    assert.ok(memory.search(result.candidates[0]!.id)[0]!.impact!.length > 200);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('recurring model failures coalesce across notifications and retries without losing provenance', () => {
+  const root = mkdtempSync(join(tmpdir(), 'watch-recall-'));
+  try {
+    const memory = new MemoryLattice(root);
+    for (const [type, id] of [['model_error', 's1'], ['sounding_failed', 's1'], ['model_error', 's2']]) {
+      const input = captureInputFromWatchEvent({ type: type!, soundingId: id!, at: id!, modelId: 'test:model',
+        error: { message: 'Insufficient credits', statusCode: 402, stack: `stack-${id}`, requestBody: 'large body' } });
+      assert.ok(input);
+      memory.captureEpisode(input);
+    }
+    const records = memory.records();
+    assert.equal(records.length, 1);
+    assert.deepEqual(records[0]!.provenance.soundingIds, ['s1', 's2']);
+    assert.deepEqual(records[0]!.provenance.sources, ['model_error', 'sounding_failed']);
+    assert.doesNotMatch(records[0]!.text, /stack|large body/);
+    memory.captureEpisode(captureInputFromWatchEvent({ type: 'model_error', modelId: 'other:model', error: { message: 'Insufficient credits', statusCode: 402 } })!);
+    memory.captureEpisode(captureInputFromWatchEvent({ type: 'model_error', modelId: 'test:model', error: { message: 'Invalid credentials', statusCode: 401 } })!);
+    assert.equal(memory.records().length, 3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+test('recall does not backfill weaker matches after the strongest entries are in context', () => {
+  const root = mkdtempSync(join(tmpdir(), 'watch-recall-'));
+  try {
+    const memory = new MemoryLattice(root);
+    for (let i = 0; i < 8; i++) memory.captureEpisode({ kind: 'lesson', text: `Matrix routing lesson ${i}.` });
+    const first = memory.formatCandidateBlock({ text: 'Matrix routing' });
+    const presented = new Set(first.candidates.map(memoryPresentationKey));
+    assert.equal(memory.formatCandidateBlock({ text: 'Matrix routing', presented }).block, '');
+    assert.equal(memory.retrievalKey({ text: 'Matrix routing' }), memory.retrievalKey({ text: 'routing Matrix' }));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

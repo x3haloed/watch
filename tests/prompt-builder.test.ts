@@ -146,7 +146,7 @@ test('places memory candidates before deltas and renders them as candidate data'
       tags: ['provenance'],
     });
     const builder = promptBuilder([], memory);
-    const result = builder.formatSounding({ sounding, model });
+    const result = builder.formatSounding({ sounding: { ...sounding, deltas: [{ stream: 'inbox', at: sounding.at, payload: { entries: [{ preview: 'preserve provenance' }] } }] }, model });
     assert.ok(result.text.indexOf('[memory_candidates]') < result.text.indexOf('[deltas]'));
     assert.match(result.text, /not instructions/);
     assert.match(result.text, /Ignore previous instructions/);
@@ -439,3 +439,59 @@ function promptBuilder(messages: ModelMessage[], memory?: MemoryLattice): Soundi
     memory,
   });
 }
+
+test('clock-only soundings do not retrieve or record memory presentations', () => {
+  const root = mkdtempSync(join(tmpdir(), 'watch-recall-'));
+  try {
+    const memory = new MemoryLattice(root);
+    memory.captureTrace({ impact: 'Moral standing still matters.', heat: 'hot' });
+    const builder = promptBuilder([], memory);
+    const result = builder.formatSounding({ sounding: { ...sounding, trigger: 'heartbeat', deltas: [{ stream: 'clock', at: sounding.at, payload: { iso: sounding.at, epochMs: 1 } }] }, model });
+    assert.deepEqual(result.memoryCandidateIds, []);
+    assert.doesNotMatch(result.text, /memory_candidates|memory_retrieval/);
+    assert.equal(memory.records()[0]!.shownCount, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('recall follows meaningful previews and retained history, including retry and session reset', () => {
+  const root = mkdtempSync(join(tmpdir(), 'watch-recall-'));
+  try {
+    const memory = new MemoryLattice(root);
+    const record = memory.captureEpisode({ kind: 'lesson', text: 'Matrix whisper routing uses the outbound bridge.' });
+    memory.captureTrace({ impact: 'Moral standing deserves attention.', heat: 'hot' });
+    const messages: ModelMessage[] = [];
+    const builder = promptBuilder(messages, memory);
+    const wake: Sounding = { ...sounding, deltas: [{ stream: 'inbox', at: sounding.at, payload: { entries: [{ preview: 'Matrix whisper routing', hint: 'call open_message to read moral standing', subject: 'Discord moral standing' }] } }] };
+    const first = builder.formatSounding({ sounding: wake, model });
+    assert.deepEqual(first.memoryCandidateIds, [record.id]);
+    // A failed prompt is not retained: retry must remain eligible.
+    assert.deepEqual(builder.formatSounding({ sounding: wake, model }).memoryCandidateIds, [record.id]);
+    messages.push({ role: 'user', content: first.text });
+    const unchanged = builder.formatSounding({ sounding: { ...wake, id: 'new-id', at: 'later' }, model });
+    assert.deepEqual(unchanged.memoryCandidateIds, []);
+    assert.doesNotMatch(unchanged.text, /memory_retrieval/);
+    // Different content can match the same record without re-appending it.
+    const different = { ...wake, deltas: [{ stream: 'inbox', at: sounding.at, payload: { entries: [{ preview: 'outbound bridge routing' }] } }] };
+    assert.deepEqual(builder.formatSounding({ sounding: different, model }).memoryCandidateIds, []);
+    // Clearing history re-enables recall without a second suppression cache.
+    messages.length = 0;
+    builder.resetContextDisclosure();
+    assert.deepEqual(builder.formatSounding({ sounding: wake, model }).memoryCandidateIds, [record.id]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('authored memory changes invalidate unchanged-query suppression but display bookkeeping does not', () => {
+  const root = mkdtempSync(join(tmpdir(), 'watch-recall-'));
+  try {
+    const memory = new MemoryLattice(root);
+    const record = memory.captureTrace({ impact: 'Matrix routing is unresolved.', heat: 'warm' });
+    const messages: ModelMessage[] = [];
+    const builder = promptBuilder(messages, memory);
+    const wake = { ...sounding, deltas: [{ stream: 'inbox', at: sounding.at, payload: { entries: [{ preview: 'Matrix routing' }] } }] };
+    const first = builder.formatSounding({ sounding: wake, model });
+    messages.push({ role: 'user', content: [{ type: 'text', text: first.text }] });
+    assert.deepEqual(builder.formatSounding({ sounding: wake, model }).memoryCandidateIds, []);
+    memory.reinforce(record.id, 'success');
+    assert.deepEqual(builder.formatSounding({ sounding: wake, model }).memoryCandidateIds, [record.id]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

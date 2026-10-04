@@ -1,3 +1,23 @@
+## Memory recall
+
+Ordinary lattice recall uses new textual delta content rather than clocks, routing hints,
+or model metadata. Clock-only soundings do not retrieve memories. Unchanged queries are
+skipped while the lattice is unchanged, and an unchanged memory version is presented only
+once per conversation. Both checks follow retained message history, so clearing history
+with `curl` re-enables recall and discarded failed prompts remain eligible for retry.
+
+Automatic recall requires a keyword match and presents at most three compact entries in
+a 2,400-character block. Heat and authored layers influence ranking only among relevant
+records. Each trace retains an excerpt of its impact, event, felt sense, and significance;
+full records remain available through `memory_search`, including exact-ID lookup. Only
+entries actually included in the block count as shown. Retrieval is lexical, not a claim
+of semantic relevance or demonstrated behavioral benefit.
+
+Repeated model failures coalesce by model, status, and error message, merging provenance
+from both error notifications and subsequent retries. Detailed occurrences remain in event
+logs. Existing records and agent-authored memory transitions remain intact; this change
+does not rewrite or delete historical failure records.
+
 ## Seed crystals
 
 Watch can preserve scarce, agent-authored activation language across reentry. Enable it with

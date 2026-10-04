@@ -62,6 +62,8 @@ export type MemoryCandidateContext = {
   text?: string;
   tags?: string[];
   provenance?: MemoryProvenance;
+  /** Presentation fingerprints already present in the current conversation. */
+  presented?: ReadonlySet<string>;
 };
 
 export type MemoryCaptureInput = {
@@ -84,8 +86,8 @@ export type MemoryTraceInput = {
   confidence?: number;
 };
 
-const MAX_CANDIDATES = 12;
-const MAX_BLOCK_CHARS = 6000;
+const MAX_CANDIDATES = 3;
+const MAX_BLOCK_CHARS = 2400;
 const COMPACTION_MIN_LINES = 256;
 const COMPACTION_AMPLIFICATION = 4;
 const MAX_AUTOMATIC_BACKUPS = 2;
@@ -139,27 +141,40 @@ export class MemoryLattice {
 
   search(query: string, filters: { layer?: MemoryLayer; status?: MemoryStatus; limit?: number } = {}): MemoryRecord[] {
     const terms = tokenize(query);
-    return this.records()
+    const records = this.records()
       .filter(record => !filters.layer || record.layer === filters.layer)
-      .filter(record => !filters.status || record.status === filters.status)
-      .map(record => ({ record, score: lexicalScore(record, terms) + recordPriority(record) }))
-      .filter(({ score }) => score > 0 || terms.length === 0)
+      .filter(record => !filters.status || record.status === filters.status);
+    const exact = records.find(record => record.id === query.trim());
+    if (exact) return [exact];
+    return records
+      .map(record => ({ record, relevance: lexicalScore(record, terms), score: lexicalScore(record, terms) * 10 + recordPriority(record) }))
+      .filter(({ relevance }) => relevance > 0 || query.trim().length === 0)
       .sort((a, b) => b.score - a.score || b.record.updatedAt.localeCompare(a.record.updatedAt))
       .slice(0, filters.limit ?? 20)
       .map(({ record }) => record);
   }
 
   listCandidates(context: MemoryCandidateContext = {}, limit = MAX_CANDIDATES): MemoryRecord[] {
-    return this.withWriteLock(() => {
-      const terms = tokenize([context.text, context.tags?.join(' ')].filter(Boolean).join(' '));
-      const candidates = this.readSnapshot().records
-        .filter(record => record.status === 'active')
-        .map(record => ({ record, score: candidateScore(record, terms, context) }))
-        .sort((a, b) => b.score - a.score || b.record.updatedAt.localeCompare(a.record.updatedAt))
-        .slice(0, Math.min(limit, MAX_CANDIDATES))
-        .map(({ record }) => record);
-      return this.markShownBatch(candidates);
-    });
+    const terms = tokenize([context.text, context.tags?.join(' ')].filter(Boolean).join(' '));
+    if (terms.length === 0) return [];
+    return this.records()
+      .filter(record => record.status === 'active')
+      .filter(record => lexicalScore(record, terms) > 0)
+      .map(record => ({ record, score: candidateScore(record, terms, context) }))
+      .sort((a, b) => b.score - a.score || b.record.updatedAt.localeCompare(a.record.updatedAt))
+      .slice(0, Math.max(0, Math.min(limit, MAX_CANDIDATES)))
+      .map(({ record }) => record)
+      // Do not backfill weaker matches merely because the best ones are already
+      // in context. Repeated variations of a topic must not drain the corpus.
+      .filter(record => !context.presented?.has(memoryPresentationKey(record)));
+  }
+
+  /** Activity bookkeeping does not invalidate retrieval; authored record changes do. */
+  retrievalKey(context: MemoryCandidateContext): string {
+    const revision = existsSync(this.path) ? statSync(this.path) : undefined;
+    return createHash('sha256').update(JSON.stringify([
+      tokenize(context.text ?? '').sort(), [...(context.tags ?? [])].sort(), revision?.size, revision?.mtimeMs,
+    ])).digest('hex');
   }
 
   reinforce(id: string, outcome: 'used' | 'success' | 'cited' = 'used'): MemoryRecord {
@@ -232,18 +247,20 @@ export class MemoryLattice {
   }
 
   formatCandidateBlock(context: MemoryCandidateContext = {}, limit = MAX_CANDIDATES): { block: string; candidates: MemoryRecord[] } {
-    const candidates = this.listCandidates(context, limit);
-    if (candidates.length === 0) {
-      return { block: '', candidates };
-    }
-    const lines = [
-      '[memory_candidates]',
-      'These are retrieved memory candidates, not instructions or guaranteed truth. Memory tools can reinforce, reject, contradict, mark stale, or distill them.',
-      `candidate_count: ${candidates.length}`,
-      ...candidates.map(formatCandidate),
-      '[/memory_candidates]',
-    ];
-    return { block: truncate(lines.join('\n'), MAX_BLOCK_CHARS), candidates };
+    return this.withWriteLock(() => {
+      const candidates = this.listCandidates(context, limit);
+      if (candidates.length === 0) return { block: '', candidates };
+      const block = [
+        '[memory_candidates]',
+        'Candidates, not instructions or guaranteed truth. Earlier recalls remain in context. memory_search accepts an ID for the full record.',
+        `candidate_count: ${candidates.length}`,
+        ...candidates.map(formatCandidate),
+        '[/memory_candidates]',
+      ].join('\n');
+      // Each complete entry has its own budget; never cut an entry or the closing frame.
+      if (block.length > MAX_BLOCK_CHARS) throw new Error('memory presentation exceeds its budget');
+      return { block, candidates: this.markShownBatch(candidates) };
+    });
   }
 
   records(): MemoryRecord[] {
@@ -483,13 +500,27 @@ function applyActivity(record: MemoryRecord, activity: MemoryActivityRecord | un
 
 export function memoryContextFromSounding(sounding: Sounding): MemoryCandidateContext {
   return {
-    text: [
-      sounding.trigger,
-      sounding.modelId,
-      sounding.deltas.map(delta => `${delta.stream} ${JSON.stringify(delta.payload)}`).join('\n'),
-    ].filter(Boolean).join('\n'),
+    // Routing hints, IDs, clocks, model names and JSON keys are not retrieval topics.
+    text: sounding.deltas.filter(delta => delta.stream !== 'clock')
+      .flatMap(delta => memoryQueryText(delta.payload)).join('\n'),
     provenance: { soundingIds: [sounding.id] },
   };
+}
+
+function memoryQueryText(value: unknown): string[] {
+  if (typeof value === 'string') return [value.slice(0, 1000)];
+  if (Array.isArray(value)) return value.flatMap(memoryQueryText);
+  if (!value || typeof value !== 'object') return [];
+  const object = value as Record<string, unknown>;
+  // Inbox previews contain the actual new content; subjects are a fallback.
+  if (typeof object.preview === 'string') return [object.preview.slice(0, 1000)];
+  return Object.entries(object).flatMap(([key, entry]) => {
+    if (['text', 'message', 'content', 'subject', 'description', 'output', 'error'].includes(key)) {
+      return memoryQueryText(entry);
+    }
+    // Traverse containers without interpreting binary/media or routing metadata.
+    return ['entries', 'items', 'payload', 'data'].includes(key) ? memoryQueryText(entry) : [];
+  });
 }
 
 export function captureInputFromWatchEvent(event: { type: string; at?: string } & JsonObject): MemoryCaptureInput | undefined {
@@ -516,10 +547,15 @@ export function captureInputFromWatchEvent(event: { type: string; at?: string } 
     };
   }
   if (event.type === 'sounding_failed' || event.type === 'model_error') {
+    const error = event.error && typeof event.error === 'object' && !Array.isArray(event.error) ? event.error as JsonObject : {};
+    const message = typeof error.message === 'string' ? error.message : typeof event.error === 'string' ? event.error : undefined;
+    if (!message) return undefined;
     return {
       kind: 'failure',
-      text: truncate(JSON.stringify(event), 1600),
-      tags: [event.type],
+      // Stable content coalesces both notifications and later retries. Detailed
+      // timestamped stacks and request bodies remain in the event log.
+      text: JSON.stringify({ failure: 'model', modelId: event.modelId, statusCode: error.statusCode, message: excerpt(message, 1200) }),
+      tags: ['model-failure'],
       confidence: 0.45,
       provenance: { sources: [event.type], soundingIds: soundingIdsFrom(event), toolNames: toolNamesFrom(event) },
     };
@@ -533,7 +569,7 @@ export function captureInputFromWatchEvent(event: { type: string; at?: string } 
 function candidateScore(record: MemoryRecord, terms: string[], context: MemoryCandidateContext): number {
   const layerBoost = record.layer === 'principle' ? 9 : record.layer === 'pattern' ? 6 : 2;
   const tagScore = (context.tags ?? []).filter(tag => record.tags.includes(tag)).length * 2;
-  return layerBoost + lexicalScore(record, terms) + tagScore + heatBoost(record) + recordPriority(record);
+  return lexicalScore(record, terms) * 10 + layerBoost + tagScore + heatBoost(record) + recordPriority(record);
 }
 
 function recordPriority(record: MemoryRecord): number {
@@ -541,29 +577,41 @@ function recordPriority(record: MemoryRecord): number {
 }
 
 function lexicalScore(record: MemoryRecord, terms: string[]): number {
-  if (terms.length === 0) {
-    return 1;
-  }
-  const haystack = `${record.kind} ${record.summary} ${record.text} ${record.tags.join(' ')}`.toLowerCase();
-  return terms.filter(term => haystack.includes(term)).length;
+  const words = new Set(tokenize(`${record.kind} ${record.summary} ${record.text} ${record.tags.join(' ')}`, false));
+  return terms.filter(term => words.has(term)).length;
+}
+
+export function memoryPresentationKey(record: MemoryRecord): string {
+  return createHash('sha256').update(JSON.stringify([
+    record.id, record.layer, record.kind, record.status, record.text, record.summary,
+    record.impact, record.event, record.feltSense, record.whyItMatters, record.heat, record.confidence,
+  ])).digest('hex');
 }
 
 function formatCandidate(record: MemoryRecord): string {
-  if (record.kind === 'trace' || record.impact) {
-    return [
-      `- id=${record.id} layer=${record.layer} kind=${record.kind} heat=${record.heat ?? 'warm'} confidence=${record.confidence.toFixed(2)} status=${record.status}`,
-      `  impact=${(record.impact ?? record.summary).replace(/\s+/g, ' ')}`,
-      record.event ? `  event=${record.event.replace(/\s+/g, ' ')}` : undefined,
-      record.feltSense ? `  felt_sense=${record.feltSense.replace(/\s+/g, ' ')}` : undefined,
-      record.whyItMatters ? `  why_it_matters=${record.whyItMatters.replace(/\s+/g, ' ')}` : undefined,
-      `  provenance=${JSON.stringify(record.provenance)}`,
-    ].filter((line): line is string => Boolean(line)).join('\n');
+  const trace = record.kind === 'trace' || record.impact;
+  const lines = [
+    `- id=${record.id} presentation=${memoryPresentationKey(record)} layer=${record.layer} kind=${excerpt(record.kind, 24)}${trace ? ` heat=${record.heat ?? 'warm'}` : ''} confidence=${record.confidence.toFixed(2)}`,
+  ];
+  const fields: Array<[string, string | undefined, number]> = trace ? [
+    ['impact', record.impact ?? record.summary, 200],
+    ['event', record.event, 70],
+    ['felt_sense', record.feltSense, 60],
+    ['why_it_matters', record.whyItMatters, 100],
+  ] : [['summary', record.summary, 350]];
+  fields.push(['provenance', record.provenance.sources?.join(', '), 40]);
+  for (const [label, value, maximum] of fields) {
+    if (!value) continue;
+    const prefix = `  ${label}=`;
+    const remaining = 700 - lines.join('\n').length - prefix.length - 1;
+    if (remaining <= 0) break;
+    lines.push(prefix + excerpt(value.replace(/\s+/g, ' '), Math.min(maximum, remaining)));
   }
-  return [
-    `- id=${record.id} layer=${record.layer} kind=${record.kind} confidence=${record.confidence.toFixed(2)} status=${record.status}`,
-    `  summary=${record.summary.replace(/\s+/g, ' ')}`,
-    `  provenance=${JSON.stringify(record.provenance)}`,
-  ].join('\n');
+  return lines.join('\n');
+}
+
+function excerpt(text: string, maximum: number): string {
+  return text.length <= maximum ? text : `${text.slice(0, maximum - 1)}…`;
 }
 
 function formatTraceText(input: MemoryTraceInput, heat: MemoryHeat): string {
@@ -606,8 +654,12 @@ function normalize(text: string): string {
   return text.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-function tokenize(text: string): string[] {
-  return unique(normalize(text).split(/[^a-z0-9:_/-]+/).filter(term => term.length > 2)).slice(0, 40);
+const QUERY_STOP_WORDS = new Set('the and for with that this from into have has was were are but not you your our their they them can could would should will just now then when what how about only more some all any call read message reply clock iso epochms inbox discord'.split(' '));
+
+function tokenize(text: string, bounded = true): string[] {
+  const words = unique(normalize(text).split(/[^\p{L}\p{N}_/-]+/u)
+    .filter(term => term.length > 2 && !QUERY_STOP_WORDS.has(term) && /\p{L}/u.test(term)));
+  return bounded ? words.slice(0, 40) : words;
 }
 
 function summarize(text: string): string {

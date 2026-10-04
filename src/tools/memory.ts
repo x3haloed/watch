@@ -46,11 +46,11 @@ export function createMemoryTools(ctx: LookoutToolContext, sounding?: Sounding, 
       },
     }),
     memory_search: tool({
-      description: 'Search lattice memories. Results are candidates, not guaranteed truth.',
+      description: 'Search full lattice memories by topic, or pass an exact memory ID to expand a compact recall. Results are candidates, not guaranteed truth.',
       inputSchema: jsonSchema<{ query: string; layer?: 'episode' | 'pattern' | 'principle'; limit?: number }>({
         type: 'object',
         properties: {
-          query: { type: 'string' },
+          query: { type: 'string', description: 'Topic keywords or an exact memory ID.' },
           layer: { type: 'string', enum: ['episode', 'pattern', 'principle'] },
           limit: { type: 'number' },
         },

@@ -2,7 +2,7 @@ import type { ModelMessage } from 'ai';
 import type { ModelRegistry } from './model-registry.js';
 import type { SkillLibrary } from './skills.js';
 import type { Scratchpad } from './scratchpad.js';
-import type { MemoryLattice } from './memory-lattice.js';
+import type { MemoryLattice, MemoryRecord } from './memory-lattice.js';
 import { memoryContextFromSounding } from './memory-lattice.js';
 import type { ResolvedModel, Sounding } from './types.js';
 import type { RestModelBlockedNotice, RestModelNotice } from './lookout.js';
@@ -62,7 +62,23 @@ export class SoundingPromptBuilder {
     const { sounding, model, restModelNotice, restModelBlockedNotice } = input;
     const preparedDeltas = prepareSoundingDeltas(sounding, model);
     const deltas = preparedDeltas.textLines.join('\n');
-    const memoryResult = this.input.memory?.formatCandidateBlock(memoryContextFromSounding(sounding), 12);
+    const context = memoryContextFromSounding(sounding);
+    let memoryResult: { block: string; candidates: MemoryRecord[] } | undefined;
+    if (this.input.memory && context.text?.trim()) {
+      const history = this.input.messages.filter(message => message.role === 'user').flatMap(message =>
+        typeof message.content === 'string' ? [message.content]
+          : message.content.filter(part => part.type === 'text').map(part => part.text));
+      const key = this.input.memory.retrievalKey(context);
+      const marker = `[memory_retrieval key=${key}]`;
+      // Derive suppression from retained history, not a separate session cache.
+      // A rolled-back failed prompt or curl therefore cannot hide future recall.
+      if (!history.some(text => text.includes(marker))) {
+        context.presented = new Set(history.flatMap(text =>
+          [...text.matchAll(/presentation=([a-f0-9]{64})/g)].map(match => match[1]!)));
+        const result = this.input.memory.formatCandidateBlock(context);
+        memoryResult = { ...result, block: `${marker}\n${result.block}` };
+      }
+    }
     const memoryBlock = memoryResult?.block ?? '';
     const restModelFrame = restModelNotice ? `
 [model_restored]
