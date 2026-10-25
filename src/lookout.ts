@@ -1,8 +1,6 @@
 import { ToolLoopAgent, isStepCount } from 'ai';
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 import type { ModelMessage } from 'ai';
-import type { ResolvedModel, SeedCrystalPolicy, Sounding, StreamDelta } from './types.js';
+import type { ResolvedModel, Sounding, StreamDelta } from './types.js';
 import { StreamRegistry } from './streams.js';
 import { EventLog } from './event-log.js';
 import { ModelRegistry } from './model-registry.js';
@@ -31,10 +29,6 @@ import {
 import { InferenceForensics } from './inference-forensics.js';
 import { createLookoutTools } from './lookout-tools.js';
 import { MediaService, type OpenMediaInput } from './media-service.js';
-import { MemoryLattice } from './memory-lattice.js';
-import { SeedCrystalStore } from './seed-crystals.js';
-import { RefinementStore, resolveFileEvidence } from './refinements.js';
-import { readSeedCrystalControl } from './seed-crystal-control.js';
 import { SessionController, type CurlResult, type RebootRequest } from './session-controller.js';
 import { SoundingPromptBuilder } from './sounding-prompt.js';
 import type { LookoutToolContext, RerouteRequest } from './tools/context.js';
@@ -69,9 +63,6 @@ export class Lookout {
   private readonly prompt: SoundingPromptBuilder;
   private readonly media: MediaService;
   private readonly session: SessionController;
-  private readonly memory: MemoryLattice;
-  private readonly refinements: RefinementStore;
-  private readonly seedCrystals?: SeedCrystalStore;
   private readonly tokenTracker = new ContextTokenTracker();
   private readonly cwd: string;
 
@@ -90,27 +81,12 @@ export class Lookout {
     private readonly scratchpad?: Scratchpad,
     redactedEnvNames: string[] = [],
     private readonly game?: { controlUrl: string; actionTimeoutMs?: number },
-    seedCrystalPolicy?: SeedCrystalPolicy,
   ) {
     this.cwd = instanceRoot;
     this.fileTools = new RepoFileTools(instanceRoot);
     this.skills = new SkillLibrary(instanceRoot);
     this.terminalTools = new TerminalTools(instanceRoot, log, redactedEnvNames);
     this.media = new MediaService(this.fileTools, streams.inbox, models);
-    this.memory = new MemoryLattice(instanceRoot);
-    this.refinements = new RefinementStore(instanceRoot, reference => {
-      if (reference.kind === 'lattice') return this.memory.get(reference.id) ? { resolved: true } : { resolved: false, reason: 'lattice record not found' };
-      if (reference.kind === 'file') return resolveFileEvidence(instanceRoot, reference.path);
-      return { resolved: false, reason: 'ledger evidence is not available in this harness' };
-    });
-    const seedControl = readSeedCrystalControl(instanceRoot);
-    this.seedCrystals = seedCrystalPolicy?.enabled && seedCrystalPolicy.injectionEnabled && seedControl.injectionOverride !== false
-      ? new SeedCrystalStore(instanceRoot, reference => {
-          if (reference.kind === 'lattice') return this.memory.get(reference.id) ? { resolved: true } : { resolved: false, reason: 'lattice record not found' };
-          if (reference.kind === 'file') return existsSync(resolve(instanceRoot, reference.path)) ? { resolved: true } : { resolved: false, reason: 'file not found' };
-          return { resolved: false, reason: 'ledger evidence is not available in this harness' };
-        }, seedCrystalPolicy)
-      : undefined;
     this.prompt = new SoundingPromptBuilder({
       cwd: instanceRoot,
       contextPrompt: buildContextPrompt(instanceRoot),
@@ -123,8 +99,6 @@ export class Lookout {
       estimatedTokenWarningThreshold,
       tokenTracker: this.tokenTracker,
       scratchpad,
-      memory: this.memory,
-      seedCrystals: this.seedCrystals,
     });
     this.session = new SessionController({
       cwd: instanceRoot,
@@ -183,15 +157,12 @@ export class Lookout {
   ): Promise<{ text: string; toolCallCount: number }> {
     let activeTurnModel = model;
     let currentStepModel = model;
-    const { text: promptText, mediaParts, memoryCandidateIds } = this.prompt.formatSounding({
+    const { text: promptText, mediaParts } = this.prompt.formatSounding({
       sounding,
       model,
       restModelNotice: options.restModelNotice,
       restModelBlockedNotice: options.restModelBlockedNotice,
     });
-    if (memoryCandidateIds.length > 0) {
-      this.log.append({ type: 'memory_candidates_presented', at: new Date().toISOString(), soundingId: sounding.id, memoryIds: memoryCandidateIds });
-    }
     this.repairMessageHistory();
     // Build content as array when camera/video media is present, string otherwise
     const content = mediaParts.length > 0
@@ -322,9 +293,6 @@ export class Lookout {
       discord: this.discord,
       moltbook: this.moltbook,
       scratchpad: this.scratchpad,
-      memory: this.memory,
-      refinements: this.refinements,
-      seedCrystals: this.seedCrystals,
       game: this.game,
       messages: this.messages,
       instructions: () => this.prompt.instructions(),
@@ -333,7 +301,7 @@ export class Lookout {
       switchModelForCurrentSounding: request => this.switchModelForCurrentSounding(sounding, currentModel(), setCurrentModel, request),
       openMediaForModel: (input, activeModel) => this.openMediaForModel(input, activeModel),
     };
-    return createLookoutTools(ctx, sounding, currentModel());
+    return createLookoutTools(ctx, sounding);
   }
 
   private repairMessageHistory(): void {

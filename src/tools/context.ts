@@ -4,7 +4,6 @@ import type { MoltbookBridge } from '../moltbook.js';
 import type { EventLog } from '../event-log.js';
 import type { RepoFileTools } from '../file-tools.js';
 import type { MediaService, OpenMediaInput } from '../media-service.js';
-import type { MemoryLattice } from '../memory-lattice.js';
 import type { MessageInbox } from '../message-inbox.js';
 import type { ModelRegistry } from '../model-registry.js';
 import type { Scratchpad } from '../scratchpad.js';
@@ -14,8 +13,6 @@ import type { StreamRegistry } from '../streams.js';
 import type { TerminalTools } from '../terminal-tools.js';
 import type { ResolvedModel } from '../types.js';
 import type { ContextFit } from '../lookout-helpers.js';
-import type { SeedCrystalStore } from '../seed-crystals.js';
-import type { RefinementStore } from '../refinements.js';
 
 export type RerouteRequest = {
   modelId: string;
@@ -37,9 +34,6 @@ export interface LookoutToolContext {
   discord?: DiscordBridge;
   moltbook?: MoltbookBridge;
   scratchpad?: Scratchpad;
-  memory: MemoryLattice;
-  refinements: RefinementStore;
-  seedCrystals?: SeedCrystalStore;
   game?: { controlUrl: string; actionTimeoutMs?: number };
   messages: ModelMessage[];
   instructions: () => Promise<string>;

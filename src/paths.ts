@@ -66,19 +66,3 @@ export function modelsDevCachePath(instanceRoot: string): string {
 export function configPath(instanceRoot: string): string {
   return join(instanceDir(instanceRoot), 'config.json');
 }
-
-export function seedCrystalsPath(instanceRoot: string): string {
-  return join(instanceDir(instanceRoot), 'memory', 'seed-crystals.jsonl');
-}
-
-export function refinementsPath(instanceRoot: string): string {
-  return join(instanceDir(instanceRoot), 'memory', 'refinements.jsonl');
-}
-
-export function seedCrystalsIndexPath(instanceRoot: string): string {
-  return join(instanceDir(instanceRoot), 'memory', 'seed-crystals-index.json');
-}
-
-export function seedCrystalControlPath(instanceRoot: string): string {
-  return join(stateDir(instanceRoot), 'seed-crystal-control.json');
-}

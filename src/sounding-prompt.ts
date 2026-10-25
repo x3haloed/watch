@@ -2,8 +2,6 @@ import type { ModelMessage } from 'ai';
 import type { ModelRegistry } from './model-registry.js';
 import type { SkillLibrary } from './skills.js';
 import type { Scratchpad } from './scratchpad.js';
-import type { MemoryLattice, MemoryRecord } from './memory-lattice.js';
-import { memoryContextFromSounding } from './memory-lattice.js';
 import type { ResolvedModel, Sounding } from './types.js';
 import type { RestModelBlockedNotice, RestModelNotice } from './lookout.js';
 import { LOOKOUT_INSTRUCTIONS } from './lookout-instructions.js';
@@ -19,7 +17,6 @@ import {
   type SoundingMediaPart,
 } from './lookout-helpers.js';
 import type { ContextTokenTracker } from './token-estimator.js';
-import type { SeedCrystalStore } from './seed-crystals.js';
 
 export class SoundingPromptBuilder {
   private disclosedContextThreshold = 0;
@@ -38,8 +35,6 @@ export class SoundingPromptBuilder {
       estimatedTokenWarningThreshold: number;
       tokenTracker: ContextTokenTracker;
       scratchpad?: Scratchpad;
-      memory?: MemoryLattice;
-      seedCrystals?: SeedCrystalStore;
     },
   ) {}
 
@@ -50,7 +45,7 @@ export class SoundingPromptBuilder {
       this.availableSkillsPrompt(),
     ]);
     const environment = `[environment]\ncwd: ${this.input.cwd}\nFilesystem tools accept relative paths from cwd and absolute paths. They reject parent traversal paths containing "..".\n[/environment]`;
-    return [LOOKOUT_INSTRUCTIONS, this.scratchpadGuidance(), environment, modelRoster, availableSkills, context, this.input.seedCrystals?.formatActiveBlock(), this.input.scratchpad?.agentPrompt()].filter(Boolean).join('\n\n');
+    return [LOOKOUT_INSTRUCTIONS, this.scratchpadGuidance(), environment, modelRoster, availableSkills, context, this.input.scratchpad?.agentPrompt()].filter(Boolean).join('\n\n');
   }
 
   formatSounding(input: {
@@ -58,28 +53,10 @@ export class SoundingPromptBuilder {
     model: ResolvedModel;
     restModelNotice?: RestModelNotice;
     restModelBlockedNotice?: RestModelBlockedNotice;
-  }): { text: string; mediaParts: SoundingMediaPart[]; memoryCandidateIds: string[] } {
+  }): { text: string; mediaParts: SoundingMediaPart[] } {
     const { sounding, model, restModelNotice, restModelBlockedNotice } = input;
     const preparedDeltas = prepareSoundingDeltas(sounding, model);
     const deltas = preparedDeltas.textLines.join('\n');
-    const context = memoryContextFromSounding(sounding);
-    let memoryResult: { block: string; candidates: MemoryRecord[] } | undefined;
-    if (this.input.memory && context.text?.trim()) {
-      const history = this.input.messages.filter(message => message.role === 'user').flatMap(message =>
-        typeof message.content === 'string' ? [message.content]
-          : message.content.filter(part => part.type === 'text').map(part => part.text));
-      const key = this.input.memory.retrievalKey(context);
-      const marker = `[memory_retrieval key=${key}]`;
-      // Derive suppression from retained history, not a separate session cache.
-      // A rolled-back failed prompt or curl therefore cannot hide future recall.
-      if (!history.some(text => text.includes(marker))) {
-        context.presented = new Set(history.flatMap(text =>
-          [...text.matchAll(/presentation=([a-f0-9]{64})/g)].map(match => match[1]!)));
-        const result = this.input.memory.formatCandidateBlock(context);
-        memoryResult = { ...result, block: `${marker}\n${result.block}` };
-      }
-    }
-    const memoryBlock = memoryResult?.block ?? '';
     const restModelFrame = restModelNotice ? `
 [model_restored]
 Watch has restored the resting model after ${restModelNotice.noToolSoundings} consecutive Soundings without tool calls.
@@ -113,13 +90,12 @@ ${this.input.models.listModelIds().map(id => `- ${id}`).join('\n')}
 subscriptions:
 ${this.input.listSubscriptions().map(stream => `- ${stream}`).join('\n')}
 [/cff_system]${this.estimatedTokenWarningFrame(model, sounding)}${this.contextDisclosureFrame(model, sounding)}
-${memoryBlock ? `\n${memoryBlock}\n` : ''}
 
 [deltas]
 ${deltas || '(none)'}
 [/deltas]${restModelFrame}${restModelBlockedFrame}`;
 
-    return { text, mediaParts: preparedDeltas.mediaParts, memoryCandidateIds: memoryResult?.candidates.map(candidate => candidate.id) ?? [] };
+    return { text, mediaParts: preparedDeltas.mediaParts };
   }
 
   resetContextDisclosure(): void {

@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { WatchRuntime } from '../src/runtime.js';
 import { Scratchpad } from '../src/scratchpad.js';
 import { StreamRegistry } from '../src/streams.js';
+import { EventLog } from '../src/event-log.js';
+import { createScratchpadTools } from '../src/tools/scratchpad.js';
+import type { LookoutToolContext } from '../src/tools/context.js';
 import type { ModelCapabilities, Sounding, WatchConfig, WatchEvent } from '../src/types.js';
 
 const capabilities: ModelCapabilities = {
@@ -16,6 +19,12 @@ test('presence produces inference without a message, then consumes a waking inbo
   const root = mkdtempSync(join(tmpdir(), 'watch-presence-contract-'));
   const previousFetch = globalThis.fetch;
   const prompts: string[] = [];
+  mkdirSync(join(root, 'memory'));
+  const archivedFiles = ['lattice.jsonl', 'seed-crystals.jsonl', 'refinements.jsonl'];
+  for (const file of archivedFiles) writeFileSync(join(root, 'memory', file), 'archived material must remain inert');
+  const scratchpad = new Scratchpad(root);
+  scratchpad.updateAgent('The workshop is in the north room.');
+  writeFileSync(scratchpad.paths.userPath, 'User prefers a quiet workspace.');
   writeFileSync(join(root, 'config.json'), JSON.stringify({ instanceVersion: 2, models: {
     'local:test': {
       provider: 'openai-compatible', model: 'test', baseURL: 'http://watch.test/v1', capabilities,
@@ -56,13 +65,26 @@ test('presence produces inference without a message, then consumes a waking inbo
   assert.equal((await first).text, 'present');
   assert.equal(started[0]?.trigger, 'heartbeat');
   assert.equal(started[0]?.deltas.some(delta => delta.stream === 'inbox'), false);
+  assert.match(prompts[0]!, /workshop is in the north room/);
+  assert.match(prompts[0]!, /quiet workspace/);
   const second = nextFinishedSounding(runtime);
+  writeFileSync(scratchpad.paths.userPath, 'User prefers daylight in the workshop.');
   runtime.enqueueInboxMessage('a new observation', 'test');
   assert.equal((await second).text, 'present');
   assert.equal(started[1]?.trigger, 'delta');
   assert.ok(started[1]?.deltas.some(delta => delta.stream === 'inbox'));
   assert.equal(prompts.length, 2);
   assert.match(prompts[1]!, /a new observation/);
+  assert.match(prompts[1]!, /daylight in the workshop/);
+  for (const prompt of prompts) {
+    assert.doesNotMatch(prompt, /archived material must remain inert/);
+    const toolNames = JSON.parse(prompt).tools.map((tool: { function: { name: string } }) => tool.function.name);
+    assert.ok(toolNames.includes('scratchpad_update_agent'));
+    assert.ok(toolNames.every((name: string) => !/^(memory_|seed_crystal_|refinement_)/.test(name)));
+  }
+  for (const file of archivedFiles) {
+    assert.equal(readFileSync(join(root, 'memory', file), 'utf8'), 'archived material must remain inert');
+  }
   const status = await runtime.status();
   assert.equal(status.running, true);
   assert.equal((status.presence as { state: string }).state, 'ready');
@@ -92,17 +114,24 @@ test('finite text consumption progresses once per sounding and resumes from its 
   streams.stop();
 });
 
-test('scratchpad orientation survives reentry and preserves user-owned notes', t => {
+test('scratchpad tools preserve orientation across reentry and leave user-owned notes intact', async t => {
   const root = mkdtempSync(join(tmpdir(), 'watch-scratchpad-contract-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const scratchpad = new Scratchpad(root, { agentMaxChars: 100 });
+  const log = new EventLog(root);
+  const tools = createScratchpadTools({ scratchpad, log } as LookoutToolContext);
   writeFileSync(scratchpad.paths.userPath, 'User prefers a quiet workspace.');
-  assert.equal(scratchpad.updateAgent('The workshop is in the north room.').ok, true);
+  const result = await tools.scratchpad_update_agent.execute!({ content: 'The workshop is in the north room.' }, { toolCallId: 'save', messages: [] });
+  assert.equal(result.ok, true);
   const reentered = new Scratchpad(root, { agentMaxChars: 100 });
   assert.match(reentered.agentPrompt(), /workshop is in the north room/);
   assert.equal((reentered.read().user as Record<string, unknown>).content, 'User prefers a quiet workspace.');
-  assert.equal(reentered.updateAgent('x'.repeat(101)).ok, false);
+  const rejected = await tools.scratchpad_update_agent.execute!({ content: 'x'.repeat(101) }, { toolCallId: 'rejected', messages: [] });
+  assert.equal(rejected.ok, false);
   assert.match(reentered.agentPrompt(), /workshop is in the north room/);
+  assert.equal((reentered.read().user as Record<string, unknown>).content, 'User prefers a quiet workspace.');
+  assert.equal(log.tail().filter(event => event.type === 'scratchpad_updated').length, 1);
+  assert.equal(existsSync(join(root, 'memory')), false);
 });
 
 function nextFinishedSounding(runtime: WatchRuntime): Promise<Extract<WatchEvent, { type: 'sounding_finished' }>> {

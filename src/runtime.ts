@@ -10,7 +10,6 @@ import { GazeStore } from './gaze-state.js';
 import { Scratchpad } from './scratchpad.js';
 import { resolveStreamConfigs } from './stream-config.js';
 import { classifyInferenceError, type InferenceErrorClassification } from './lookout-helpers.js';
-import { captureInputFromWatchEvent, MemoryLattice } from './memory-lattice.js';
 import { deriveResidentPresence, isToolActivityEvent } from './presence.js';
 import { DaemonLifecycleStore, type DaemonLifecycleSnapshot } from './daemon-lifecycle.js';
 import { assertInstanceVersion } from './instance-version.js';
@@ -27,7 +26,6 @@ export class WatchRuntime {
   private readonly moltbook: MoltbookBridge;
   private readonly gazeStore: GazeStore;
   private readonly scratchpad: Scratchpad | undefined;
-  private readonly memory: MemoryLattice;
   private lastSoundingAt = Date.now();
   private running = false;
   private tickTimer: NodeJS.Timeout | undefined;
@@ -44,7 +42,6 @@ export class WatchRuntime {
   private readonly restingModelId: string | undefined;
   private pendingRestModelNotice: RestModelNotice | undefined;
   private pendingRestModelBlockedNotice: RestModelBlockedNotice | undefined;
-  private capturingEvent = false;
   private readonly pendingSteeringDeltas: StreamDelta[] = [];
   private collectingSteering = false;
   private toolActivityUntil = 0;
@@ -59,8 +56,6 @@ export class WatchRuntime {
     this.scratchpad = config.scratchpad.enabled === false ? undefined : new Scratchpad(config.instanceRoot, config.scratchpad);
     this.log = new EventLog(config.instanceRoot);
     this.lifecycle = new DaemonLifecycleStore(config.instanceRoot);
-    this.memory = new MemoryLattice(config.instanceRoot);
-    this.log.subscribe(event => this.captureEventEpisode(event));
     const streamDefinitions = config.streams ?? resolveStreamConfigs(config);
     this.streams = new StreamRegistry(
       [],
@@ -110,7 +105,6 @@ export class WatchRuntime {
       this.scratchpad,
       [config.moltbook?.apiKeyEnv ?? 'MOLTBOOK_API_KEY'],
       config.game,
-      config.memory?.seedCrystals,
     );
   }
 
@@ -208,20 +202,6 @@ export class WatchRuntime {
       modelBackoffUntil: this.modelBackoffUntil > Date.now() ? new Date(this.modelBackoffUntil).toISOString() : undefined,
       pendingDeltas: this.streams.hasPending(),
     };
-  }
-
-  recentMemory(limit = 40): Array<Record<string, unknown>> {
-    return this.memory.recent(limit).map(r => ({
-      id: r.id,
-      layer: r.layer,
-      kind: r.kind,
-      summary: r.summary,
-      text: r.text.slice(0, 500),
-      confidence: r.confidence,
-      status: r.status,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    }));
   }
 
   enqueueInboxMessage(message: string, source = 'cli', metadata?: JsonObject): { accepted: boolean } {
@@ -693,23 +673,6 @@ export class WatchRuntime {
       this.syncPresence();
     }, 3_500);
     this.syncPresence();
-  }
-
-  private captureEventEpisode(event: WatchEvent): void {
-    if (this.capturingEvent) {
-      return;
-    }
-    const input = captureInputFromWatchEvent(event as unknown as { type: string } & JsonObject);
-    if (!input) {
-      return;
-    }
-    this.capturingEvent = true;
-    try {
-      const record = this.memory.captureEpisode(input);
-      this.log.append({ type: 'memory_captured', at: new Date().toISOString(), memoryId: record.id, layer: record.layer, kind: record.kind, source: event.type, provenance: record.provenance });
-    } finally {
-      this.capturingEvent = false;
-    }
   }
 }
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -78,6 +78,7 @@ for (const interrupted of [false, true]) {
     if (interrupted) {
       assert.ok(history.some(message => typeof message.content === 'string' && message.content.includes('[model_failure_trace]')));
     }
+    assert.equal(existsSync(join(root, 'memory')), false);
   });
 }
 

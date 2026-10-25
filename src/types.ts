@@ -23,22 +23,6 @@ export type WatchConfig = {
   restAfterNoToolSoundings: number;
   estimatedTokenWarningThreshold: number;
   noModel: boolean;
-  memory?: {
-    seedCrystals: SeedCrystalPolicy;
-  };
-};
-
-export type SeedCrystalPolicy = {
-  enabled: boolean;
-  injectionEnabled: boolean;
-  commissioningEnabled: boolean;
-  creationPolicy: 'candidate_first' | 'allow_immediate_active';
-  promotionPolicy: 'judgment_only' | 'disabled';
-  maxActiveBytes: number;
-  activeCountWarning: number;
-  recoveryCliEnabled: boolean;
-  omissionExperimentsEnabled: boolean;
-  presentFitEnabled: boolean;
 };
 
 export type GameIntegrationConfig = {
@@ -363,19 +347,9 @@ export type WatchEvent =
   | { type: 'discord_presence_changed'; at: string; presence: JsonObject }
   | { type: 'discord_error'; at: string; error: JsonObject }
   | { type: 'control_message'; at: string; command: string; payload?: JsonObject }
+  | { type: 'scratchpad_updated'; at: string; file: string; chars: number }
   | { type: 'curl'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number }
   | { type: 'reboot_requested'; at: string; soundingId: string; ledgerPath?: string; wroteLedger: boolean; clearedMessages: number; source: 'tool' | 'control' }
-  | { type: 'memory_updated'; at: string; target: string; payload: JsonObject }
-  | { type: 'memory_captured'; at: string; memoryId: string; layer: string; kind: string; source: string; provenance: JsonObject }
-  | { type: 'memory_candidates_presented'; at: string; soundingId?: string; memoryIds: string[] }
-  | { type: 'memory_reinforced'; at: string; memoryId: string; outcome: string }
-  | { type: 'memory_irrelevant'; at: string; memoryId: string; reason: string }
-  | { type: 'memory_distilled'; at: string; memoryId: string; layer: string; parents: string[] }
-  | { type: 'memory_contradicted'; at: string; memoryId: string; rationale: string }
-  | { type: 'memory_stale'; at: string; memoryId: string; reason: string }
-  | { type: 'memory_scratchpad_proposed'; at: string; memoryId: string; memoryIds: string[] }
-  | { type: 'refinement_created' | 'refinement_applied' | 'refinement_evaluated' | 'refinement_rolled_back' | 'refinement_relinquished'; at: string; refinementId: string; payload: JsonObject }
-  | { type: 'seed_crystals_injected'; at: string; soundingId: string; crystalIds: string[]; omittedCrystalIds: string[]; bytes: number; estimatedTokens: number; condition: 'normal' | 'controlled_omission' | 'injection_disabled' }
   | { type: 'sse_stream_connected'; at: string; stream: string; url: string }
   | { type: 'sse_stream_disconnected'; at: string; stream: string; reason: string }
   | { type: 'sse_stream_error'; at: string; stream: string; error: string }

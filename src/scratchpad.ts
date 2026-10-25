@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
-import type { MemoryLattice, MemoryRecord } from './memory-lattice.js';
 import type { ScratchpadConfig } from './types.js';
 
 const DEFAULT_SCRATCHPAD_DIR = 'scratchpad';
@@ -18,7 +17,6 @@ export type ScratchpadPaths = {
 
 export type ScratchpadUpdateAgentResult = Record<string, unknown> & {
   ok: boolean;
-  captured: MemoryRecord[];
 };
 
 export class Scratchpad {
@@ -52,7 +50,7 @@ export class Scratchpad {
     };
   }
 
-  updateAgent(content: string, memory?: MemoryLattice): ScratchpadUpdateAgentResult {
+  updateAgent(content: string): ScratchpadUpdateAgentResult {
     const next = content.trim();
     if (next.length > this.paths.agentMaxChars) {
       return {
@@ -60,32 +58,16 @@ export class Scratchpad {
         error: `AGENT.md content is ${next.length}/${this.paths.agentMaxChars} chars. Shorten it before saving.`,
         maxChars: this.paths.agentMaxChars,
         chars: next.length,
-        captured: [],
       };
     }
 
-    const previous = readText(this.paths.agentPath);
     writeFileSync(this.paths.agentPath, next ? `${next}\n` : '', 'utf8');
     const saved = readText(this.paths.agentPath);
-    const addedText = scratchpadAddedText(previous, saved);
-    const captured = memory && addedText
-      ? [
-          memory.captureEpisode({
-            kind: 'scratchpad-diff',
-            text: addedText,
-            summary: summarizeScratchpadDiff(addedText),
-            tags: ['scratchpad-derived', 'agent-authored'],
-            provenance: { sources: ['scratchpad_update_agent'], filePaths: [this.paths.agentPath] },
-            confidence: 0.45,
-          }),
-        ]
-      : [];
     return {
       ok: true,
       message: 'AGENT.md saved. Final saved content is included below to confirm the write stuck.',
       agent: fileSnapshot('AGENT.md', this.paths.agentPath, saved, this.paths.agentMaxChars),
       content: saved,
-      captured,
     };
   }
 
@@ -145,41 +127,4 @@ function truncate(content: string, maxChars: number): string {
     return content;
   }
   return `${content.slice(0, maxChars)}\n[...truncated scratchpad at ${maxChars}/${content.length} chars]`;
-}
-
-function scratchpadAddedText(previous: string, current: string): string {
-  const previousLines = meaningfulLines(previous);
-  const currentLines = meaningfulLines(current);
-  const previousCounts = countLines(previousLines);
-  const added: string[] = [];
-
-  for (const line of currentLines) {
-    const remaining = previousCounts.get(line) ?? 0;
-    if (remaining > 0) {
-      previousCounts.set(line, remaining - 1);
-    } else {
-      added.push(line);
-    }
-  }
-
-  return added.join('\n');
-}
-
-function meaningfulLines(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean);
-}
-
-function countLines(lines: string[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const line of lines) {
-    counts.set(line, (counts.get(line) ?? 0) + 1);
-  }
-  return counts;
-}
-
-function summarizeScratchpadDiff(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
 }

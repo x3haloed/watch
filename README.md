@@ -10,9 +10,12 @@ npm test
 npm run build
 ```
 
+The build clears `dist/` before compiling, so switching versions cannot retain
+generated modules for features that have been deleted.
+
 ## V2 preservation checks
 
-Before removing memory subsystems, the v2 branch records these behavior contracts:
+The v2 branch preserves these behavior contracts through the memory removal:
 
 - `tests/watch-contract.test.ts` exercises autonomous heartbeat inference, waking
   inbox delivery, progressive book consumption with cursor restoration, and
@@ -24,38 +27,18 @@ Before removing memory subsystems, the v2 branch records these behavior contract
 - `tests/instance-install.test.ts` checks that v1 and unsupported instance versions
   are rejected without changing their files or sending control commands.
 
-## Memory recall
+## Scratchpad continuity
 
-Ordinary lattice recall uses new textual delta content rather than clocks, routing hints,
-or model metadata. Clock-only soundings do not retrieve memories. Unchanged queries are
-skipped while the lattice is unchanged, and an unchanged memory version is presented only
-once per conversation. Both checks follow retained message history, so clearing history
-with `curl` re-enables recall and discarded failed prompts remain eligible for retry.
+The persistent scratchpad (`AGENT.md` and `USER.md`) is v2's durable memory.
+`scratchpad_read` reads both files, and `scratchpad_update_agent` updates only
+`AGENT.md`. Agent notes enter the instructions at session reentry; user notes
+arrive through the existing sampled user-notes stream.
 
-Automatic recall requires a keyword match and presents at most three compact entries in
-a 2,400-character block. Heat and authored layers influence ranking only among relevant
-records. Each trace retains an excerpt of its impact, event, felt sense, and significance;
-full records remain available through `memory_search`, including exact-ID lookup. Only
-entries actually included in the block count as shown. Retrieval is lexical, not a claim
-of semantic relevance or demonstrated behavioral benefit.
-
-Repeated model failures coalesce by model, status, and error message, merging provenance
-from both error notifications and subsequent retries. Detailed occurrences remain in event
-logs. Existing records and agent-authored memory transitions remain intact; this change
-does not rewrite or delete historical failure records.
-
-## Seed crystals
-
-Watch can preserve scarce, agent-authored activation language across reentry. Enable it with
-`memory.seedCrystals.enabled` in the instance `config.json`. Crystals begin as candidates by
-default and move through explicit, judgment-only lifecycle transitions. Active crystals are
-injected into every model turn in a data-only safety envelope with authorship, evidence, and
-byte-budget validation.
-
-The model receives `seed_crystal_create`, `seed_crystal_list`, `seed_crystal_expand`, `seed_crystal_revise`,
-`seed_crystal_observe_activation`, and `seed_crystal_transition` alongside the existing memory
-tools. Facts, tasks, user instructions, and merely attractive summaries belong in ordinary
-memory rather than seed crystals.
+The memory lattice, seed crystals, and refinements have been removed, including
+capture, recall, tools, prompt injection, control files, and the companion memory
+endpoint. Existing v1 memory files are left untouched and are not read or migrated
+by v2. The existing stream system and `curl` behavior remain in place at this
+checkpoint; their redesign is separate work.
 
 ## Instance Layout
 

@@ -10,7 +10,6 @@ discord_attention, discord_mute, discord_unmute, discord_watch, and discord_unwa
 discord_read_context returns surrounding channel or thread context for a Discord inbox message. inboxMessageId identifies the opened inbox message, and its result includes older/newer continuation arguments.
 send_message accepts medium "discord" with channelId for a proactive Discord post, and replyToId identifies a reply to a Discord inbox message.
 open_media attaches images, audio, video, PDFs, and other media. When read_file identifies a media path it returns an open_media hint. A modality mismatch result from open_media includes recommended handle_with_model targets.
-Automatic memory recall contains compact excerpts of relevant memories not already presented in this conversation. memory_search accepts a memory ID for its full text, or topic keywords for further recall. An absent recall block does not imply an empty memory store.
 curl preserves an optional ledger entry while clearing session context for a fresh re-entry.
 reboot restarts the daemon after the current Sounding and includes curl semantics first.
 handle_with_model changes models within the current Sounding; it is available when another model offers needed reasoning capacity or modalities.
