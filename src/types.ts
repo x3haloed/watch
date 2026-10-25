@@ -1,6 +1,7 @@
 export type JsonObject = Record<string, unknown>;
 
 export type WatchConfig = {
+  instanceVersion: 2;
   cloneRoot: string;
   instanceRoot: string;
   minCffMs: number;

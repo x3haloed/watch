@@ -45,21 +45,38 @@ memory rather than seed crystals.
 
 ## Instance Layout
 
-Watch now expects to run from inside a bare clone at `~/.watch/<name>/watch/`.
-The parent directory is the instance root and must contain `config.json`.
+V1 remains available at the `watch-v1-baseline` tag (`cd82345`). V2 development
+is on `codex/watch-v2`; existing agents can keep their v1 checkout and instance.
+
+V2 defaults to an instance root at `<clone-parent>/v2/`. `WATCH_INSTANCE_ROOT`
+selects an explicit instance root instead. Every v2 configuration must include
+`"instanceVersion": 2`; v1 configuration is rejected before runtime files are
+created or control commands are sent. This version identifies the v2 instance
+layout and state ownership, independently of individual stream snapshot versions.
 
 Example layout:
 
 ```text
 ~/.watch/<name>/
-  config.json
-  state/
-  logs/
-  scratchpad/
-  watch/
+  config.json          # existing v1 configuration
+  state/               # existing v1 runtime state
+  logs/                # existing v1 logs
+  scratchpad/          # existing v1 scratchpads
+  watch/               # checkout
+  v2/
+    config.json        # v2 configuration with instanceVersion: 2
+    state/
+    logs/
+    scratchpad/
 ```
 
-Relative paths in `config.json` resolve from the instance root.
+To try v2, create a separate instance, copy and edit the configuration, and copy
+the desired `AGENT.md` and `USER.md` into its scratchpad directory. Do not copy
+v1 runtime state. Relative configuration paths resolve from the v2 instance root;
+review absolute paths so they do not point back to v1 files. No migration runs
+automatically, and this branch does not alter existing instances. For simultaneous
+daemons, choose a distinct `WATCH_COMPANION_PORT` and set the desktop companion's
+`WATCH_DAEMON_URL` accordingly.
 
 **Contributors**
 

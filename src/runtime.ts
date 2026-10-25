@@ -13,6 +13,7 @@ import { classifyInferenceError, type InferenceErrorClassification } from './loo
 import { captureInputFromWatchEvent, MemoryLattice } from './memory-lattice.js';
 import { deriveResidentPresence, isToolActivityEvent } from './presence.js';
 import { DaemonLifecycleStore, type DaemonLifecycleSnapshot } from './daemon-lifecycle.js';
+import { assertInstanceVersion } from './instance-version.js';
 
 const MODEL_FAILURE_BACKOFF_BASE_MS = 30_000;
 const MODEL_FAILURE_BACKOFF_MAX_MS = 5 * 60_000;
@@ -53,6 +54,7 @@ export class WatchRuntime {
   private lifecycleSnapshot: DaemonLifecycleSnapshot | undefined;
 
   constructor(private readonly config: WatchConfig, private readonly requestReboot: (source: 'tool' | 'control') => void = () => {}) {
+    assertInstanceVersion(config.instanceVersion);
     this.gazeStore = new GazeStore(config.instanceRoot);
     this.scratchpad = config.scratchpad.enabled === false ? undefined : new Scratchpad(config.instanceRoot, config.scratchpad);
     this.log = new EventLog(config.instanceRoot);

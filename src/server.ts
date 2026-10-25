@@ -7,8 +7,10 @@ import { WatchRuntime } from './runtime.js';
 import { EventLog } from './event-log.js';
 import { startCompanionHost, type CompanionHost } from './companion-host.js';
 import { redactDiagnosticText } from './daemon-lifecycle.js';
+import { assertInstanceVersion } from './instance-version.js';
 
 export async function runDaemon(config: WatchConfig): Promise<void> {
+  assertInstanceVersion(config.instanceVersion);
   const fatalLog = new EventLog(config.instanceRoot);
   const observeFatalError = (error: Error) => {
     try {

@@ -6,7 +6,7 @@ export function resolveInstanceRoot(cloneRoot: string, override?: string): strin
   if (configured) {
     return resolve(configured);
   }
-  return dirname(cloneRoot);
+  return join(dirname(cloneRoot), 'v2');
 }
 
 export function instanceDir(instanceRoot: string): string {

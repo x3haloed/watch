@@ -8,10 +8,12 @@ import { runDaemon } from './server.js';
 import { runOperatorConsole } from './tui.js';
 import type { CameraStreamConfig, MoltbookConfig, PersistedStreamConfig, SeedCrystalPolicy, WatchConfig, WebApiStreamConfig, SseStreamConfig } from './types.js';
 import { resolveStreamConfigs } from './stream-config.js';
+import { assertInstanceVersion, INSTANCE_VERSION } from './instance-version.js';
 
 dotenv.config();
 
 type WatchConfigFile = {
+  instanceVersion?: unknown;
   defaultModel?: string;
   restingModel?: string;
   ledgerPath?: string;
@@ -36,12 +38,12 @@ async function main(): Promise<void> {
   const cloneRoot = cwd();
   const instanceRoot = resolveInstanceRoot(cloneRoot, process.env.WATCH_INSTANCE_ROOT);
   const configFile = readWatchConfig(instanceRoot);
+  if (!configFile.ok) {
+    print(configFile.error);
+    exit(1);
+  }
 
   if (!area) {
-    if (!configFile.ok) {
-      print(configFile.error);
-      exit(1);
-    }
     if (await canReachDaemon(instanceRoot)) {
       await attach(instanceRoot);
     } else {
@@ -51,10 +53,6 @@ async function main(): Promise<void> {
   }
 
   if (area === 'daemon' && action === 'start') {
-    if (!configFile.ok) {
-      print(configFile.error);
-      exit(1);
-    }
     await runDaemon(defaultConfig(instanceRoot, cloneRoot, configFile.file, args));
     return;
   }
@@ -101,10 +99,6 @@ async function main(): Promise<void> {
   }
 
   if (area === 'attach') {
-    if (!configFile.ok) {
-      print(configFile.error);
-      exit(1);
-    }
     await attach(instanceRoot);
     return;
   }
@@ -162,6 +156,7 @@ function defaultConfig(instanceRoot: string, cloneRoot: string, file: WatchConfi
   }
   const streams = resolveStreamConfigs(file);
   return {
+    instanceVersion: INSTANCE_VERSION,
     instanceRoot,
     cloneRoot,
     minCffMs: numberFlag(args, '--min-cff-ms') ?? file.minCffMs ?? 2_000,
@@ -226,11 +221,13 @@ function readWatchConfig(instanceRoot: string): { ok: true; file: WatchConfigFil
   if (!existsSync(path)) {
     return {
       ok: false,
-      error: `Missing required install config: ${path}\n\nWatch now runs from inside the cloned repo at <instance>/watch/ and expects ../config.json to exist at the instance root.`,
+      error: `Missing required v2 instance config: ${path}\n\nWatch v2 defaults to <clone-parent>/v2/config.json. Set WATCH_INSTANCE_ROOT to select another v2 instance. V1 instances are not migrated automatically.`,
     };
   }
   try {
-    return { ok: true, file: JSON.parse(readFileSync(path, 'utf8')) as WatchConfigFile, filePath: path };
+    const file = JSON.parse(readFileSync(path, 'utf8')) as WatchConfigFile;
+    assertInstanceVersion(file?.instanceVersion);
+    return { ok: true, file, filePath: path };
   } catch (error) {
     return {
       ok: false,

@@ -94,6 +94,7 @@ async function fetchJson(url: string, init?: RequestInit): Promise<Record<string
 
 function testConfig(instanceRoot: string): WatchConfig {
   return {
+    instanceVersion: 2,
     cloneRoot: process.cwd(),
     instanceRoot,
     minCffMs: 60_000,

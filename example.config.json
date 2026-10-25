@@ -1,4 +1,5 @@
 {
+  "instanceVersion": 2,
   "defaultModel": "openrouter:openrouter/owl-alpha",
   "restingModel": "openrouter:openrouter/owl-alpha",
   "ledgerPath": "ledger.md",
