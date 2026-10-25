@@ -1,5 +1,5 @@
 import { type ToolCallRepairFunction, type ToolSet } from 'ai';
-import type { FilePart, ImagePart, ModelMessage, TextPart } from 'ai';
+import type { FilePart, ModelMessage, TextPart } from 'ai';
 import type { ModelCapabilities, ResolvedModel, Sounding } from './types.js';
 import { mediaPlaceholder, modelSupportsMedia, modalityFromMediaType, type MediaDescriptor, type OpenedMedia } from './media.js';
 
@@ -90,8 +90,8 @@ export function mediaToolOutputToModelOutput(output: unknown): Record<string, un
       value: [
         { type: 'text', text: typeof result.text === 'string' ? result.text : mediaPlaceholder(result.media as MediaDescriptor) },
         {
-          type: 'media',
-          data: result.media.dataBase64,
+          type: 'file',
+          data: { type: 'data', data: result.media.dataBase64 },
           mediaType: result.media.mediaType,
         },
       ],
@@ -138,8 +138,8 @@ function collectNestedMediaContentItems(value: unknown, items: Array<Record<stri
 
   if (typeof value.dataBase64 === 'string' && typeof value.mediaType === 'string') {
     items.push({
-      type: 'media',
-      data: value.dataBase64,
+      type: 'file',
+      data: { type: 'data', data: value.dataBase64 },
       mediaType: value.mediaType,
       ...(typeof value.filename === 'string' ? { filename: value.filename } : {}),
     });
@@ -395,19 +395,27 @@ function moveToolResultMediaToUserMessages(messages: ModelMessage[], model: Reso
   return moved;
 }
 
-function mediaUserContentPartsFromToolOutput(output: Record<string, unknown>, model: ResolvedModel): Array<ImagePart | FilePart | TextPart> {
+function mediaUserContentPartsFromToolOutput(output: Record<string, unknown>, model: ResolvedModel): Array<FilePart | TextPart> {
   if (output.type !== 'content' || !Array.isArray(output.value)) {
     return [];
   }
 
-  const parts: Array<ImagePart | FilePart | TextPart> = [];
-  for (const item of output.value) {
+  const parts: Array<FilePart | TextPart> = [];
+  for (const original of output.value) {
+    // Accept canonical SDK 7 files alongside legacy persisted tool results.
+    const item = isRecord(original) && original.type === 'file' && isRecord(original.data)
+      ? original.data.type === 'data'
+        ? { ...original, type: 'file-data', data: original.data.data }
+        : original.data.type === 'url'
+          ? { ...original, type: 'file-url', url: String(original.data.url) }
+          : original
+      : original;
     if (!isRecord(item)) continue;
     const mediaType = typeof item.mediaType === 'string' ? item.mediaType : undefined;
     if (!mediaType) continue;
 
-    if ((item.type === 'media' || item.type === 'image-data') && typeof item.data === 'string' && mediaType.startsWith('image/')) {
-      parts.push({ type: 'image', image: item.data, mediaType });
+    if ((item.type === 'media' || item.type === 'image-data' || item.type === 'file-data') && typeof item.data === 'string' && mediaType.startsWith('image/')) {
+      parts.push({ type: 'file', data: item.data, mediaType });
       continue;
     }
 
@@ -431,8 +439,8 @@ function mediaUserContentPartsFromToolOutput(output: Record<string, unknown>, mo
       continue;
     }
 
-    if (item.type === 'image-url' && typeof item.url === 'string') {
-      parts.push({ type: 'image', image: new URL(item.url), mediaType });
+    if ((item.type === 'image-url' || item.type === 'file-url') && typeof item.url === 'string' && mediaType.startsWith('image/')) {
+      parts.push({ type: 'file', data: new URL(item.url), mediaType });
       continue;
     }
 
@@ -698,7 +706,7 @@ function scrubMediaValue(value: unknown): unknown {
   }
 
   const record = value as Record<string, unknown>;
-  if (record.type === 'media' || record.type === 'image-data' || record.type === 'file-data') {
+  if (record.type === 'media' || record.type === 'image-data' || record.type === 'file-data' || record.type === 'file') {
     return {
       type: 'text',
       text: mediaPlaceholder({

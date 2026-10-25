@@ -33,3 +33,14 @@ test('provider input tokens replace prior message estimates as an anchor', () =>
   assert.ok(anchored > 123);
   assert.ok(anchored < 250);
 });
+
+test('SDK 7 tool-result files retain byte-based media token estimates', () => {
+  const data = 'a'.repeat(400_000);
+  const estimate = estimateModelValue({
+    type: 'file', mediaType: 'video/mp4',
+    data: { type: 'data', data },
+  });
+  assert.equal(estimate.media.length, 1);
+  assert.equal(estimate.media[0]?.bytes, 300_000);
+  assert.ok(estimate.tokens > 4200 && estimate.tokens < 4300);
+});

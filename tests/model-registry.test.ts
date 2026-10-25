@@ -126,7 +126,7 @@ test('NovitaAI request transform emits documented video and audio content parts'
           role: 'user',
           content: [
             { type: 'text', text: 'inspect' },
-            { type: 'image', image: 'image123', mediaType: 'image/jpeg' },
+            { type: 'file', data: 'image123', mediaType: 'image/jpeg' },
             { type: 'file', data: 'video123', mediaType: 'video/mp4' },
             { type: 'file', data: 'audio123', mediaType: 'audio/mpeg3' },
           ],

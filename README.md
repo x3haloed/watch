@@ -1,3 +1,15 @@
+## Development
+
+Watch uses Node.js 24 LTS and npm. With nvm installed:
+
+```sh
+nvm use
+npm ci --include=dev
+npm run typecheck
+npm test
+npm run build
+```
+
 ## Memory recall
 
 Ordinary lattice recall uses new textual delta content rather than clocks, routing hints,

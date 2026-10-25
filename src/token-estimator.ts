@@ -120,9 +120,13 @@ function estimateMediaRecord(record: Record<string, unknown>): MediaTokenEstimat
     ? record.dataBase64
     : typeof record.data === 'string'
       ? record.data
-      : typeof record.image === 'string'
-        ? record.image
-        : undefined;
+      : record.data !== null && typeof record.data === 'object'
+          && 'type' in record.data && record.data.type === 'data'
+          && 'data' in record.data && typeof record.data.data === 'string'
+        ? record.data.data
+        : typeof record.image === 'string'
+          ? record.image
+          : undefined;
   if (!dataBase64) {
     return undefined;
   }

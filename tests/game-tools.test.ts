@@ -87,8 +87,8 @@ test('game tools wait for authority and return camera as multimodal model output
   if (modelOutput.type !== 'content') return;
   assert.equal(modelOutput.value[0].type, 'text');
   assert.deepEqual(modelOutput.value[1], {
-    type: 'media',
-    data: webp.toString('base64'),
+    type: 'file',
+    data: { type: 'data', data: webp.toString('base64') },
     mediaType: 'image/webp',
   });
   assert.match(String((modelOutput.value[0] as { text?: string }).text), /"action_kind":"hold"/);

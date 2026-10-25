@@ -234,7 +234,7 @@ test('moves nested AV stream-open tool media into a synthetic user message', () 
   assert.equal(userMessage.role, 'user');
   assert.deepEqual(userMessage.content.slice(1), [
     { type: 'file', data: 'audio123', mediaType: 'audio/wav' },
-    { type: 'image', image: 'image123', mediaType: 'image/jpeg' },
+    { type: 'file', data: 'image123', mediaType: 'image/jpeg' },
   ]);
 });
 

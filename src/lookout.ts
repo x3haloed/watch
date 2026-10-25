@@ -1,4 +1,4 @@
-import { ToolLoopAgent, stepCountIs } from 'ai';
+import { ToolLoopAgent, isStepCount } from 'ai';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ModelMessage } from 'ai';
@@ -199,7 +199,7 @@ export class Lookout {
           { type: 'text' as const, text: promptText },
           ...mediaParts.map(m => {
             if (m.type === 'image') {
-              return { type: 'image' as const, image: m.image, mediaType: m.mediaType };
+              return { type: 'file' as const, data: m.image, mediaType: m.mediaType };
             } else {
               return { type: 'file' as const, data: m.data, mediaType: m.mediaType };
             }
@@ -219,17 +219,19 @@ export class Lookout {
         tools: this.createTools(sounding, () => activeTurnModel, nextModel => {
           activeTurnModel = nextModel;
         }),
-        stopWhen: [stepCountIs(20), () => options.hasSteeringPending?.() === true],
+        stopWhen: [isStepCount(20), () => options.hasSteeringPending?.() === true],
         maxOutputTokens: maxOutputTokensForModel(model),
         experimental_repairToolCall: repairFlatToolCall,
-        prepareStep: ({ messages }) => {
+        prepareStep: ({ initialMessages, responseMessages }) => {
           currentStepModel = activeTurnModel;
           return {
             model: this.models.createLanguageModel(currentStepModel, recordRequest),
-            messages: messagesForModel(currentStepModel, messages),
+            // Rebuild from untransformed history so a model switch can restore
+            // media that was unsupported or encoded differently in the last step.
+            messages: messagesForModel(currentStepModel, [...initialMessages, ...responseMessages]),
           };
         },
-        onStepFinish: step => {
+        onStepEnd: step => {
           toolCallCount += countToolCalls(step);
           checkpointMessages.push(...sanitizeMessagesForHistory(step.response.messages as ModelMessage[]));
           this.tokenTracker.recordProviderInput(step.usage.inputTokens, this.messages);
@@ -241,7 +243,7 @@ export class Lookout {
             step: toJsonObject(step),
           });
         },
-        onFinish: event => {
+        onEnd: event => {
           this.log.append({
             type: 'model_finished',
             at: new Date().toISOString(),
@@ -258,7 +260,7 @@ export class Lookout {
           abortSignal: options.abortSignal,
         });
         if (!this.session.consumeCurlDuringTurn()) {
-          this.messages.push(...sanitizeMessagesForHistory(result.response.messages));
+          this.messages.push(...sanitizeMessagesForHistory(result.responseMessages));
           this.repairMessageHistory();
         }
         checkpointMessages.length = 0;

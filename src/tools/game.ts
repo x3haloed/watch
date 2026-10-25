@@ -37,7 +37,7 @@ export function createGameTools(ctx: LookoutToolContext): ToolSet {
           type: 'content',
           value: [
             { type: 'text', text: observationText(result.observation) },
-            ...(result.camera ? [{ type: 'media' as const, data: result.camera, mediaType: 'image/webp' }] : []),
+            ...(result.camera ? [{ type: 'file' as const, data: { type: 'data' as const, data: result.camera }, mediaType: 'image/webp' }] : []),
           ],
         };
       },
