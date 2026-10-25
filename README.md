@@ -10,6 +10,20 @@ npm test
 npm run build
 ```
 
+## V2 preservation checks
+
+Before removing memory subsystems, the v2 branch records these behavior contracts:
+
+- `tests/watch-contract.test.ts` exercises autonomous heartbeat inference, waking
+  inbox delivery, progressive book consumption with cursor restoration, and
+  scratchpad reentry with user-note preservation.
+- `tests/lookout-agent.test.ts` exercises actual agent/provider serialization for
+  image/audio/video soundings, retained media, model switching, multi-step tools,
+  and interrupted-turn history. Provider responses are deterministic test fixtures;
+  these tests do not claim live model or codec compatibility.
+- `tests/instance-install.test.ts` checks that v1 and unsupported instance versions
+  are rejected without changing their files or sending control commands.
+
 ## Memory recall
 
 Ordinary lattice recall uses new textual delta content rather than clocks, routing hints,

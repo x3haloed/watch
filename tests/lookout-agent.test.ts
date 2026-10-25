@@ -133,3 +133,54 @@ test('agent restores tool images when switching back from a text-only model', as
   assert.deepEqual(images.map(parts => parts.length), [0, 1, 0, 1]);
   assert.equal(images[3][0].image_url.url, `data:image/png;base64,${image}`);
 });
+
+test('image, audio, and video sounding deltas reach the provider and survive into the next turn', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'watch-sounding-media-'));
+  const originalFetch = globalThis.fetch;
+  const previousKey = process.env.WATCH_CONTRACT_API_KEY;
+  const requests: Array<{ messages: Array<Record<string, any>> }> = [];
+  process.env.WATCH_CONTRACT_API_KEY = 'test-key';
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) delete process.env.WATCH_CONTRACT_API_KEY;
+    else process.env.WATCH_CONTRACT_API_KEY = previousKey;
+    rmSync(root, { recursive: true, force: true });
+  });
+  writeFileSync(join(root, 'config.json'), JSON.stringify({ models: {
+    'novitaai:test': {
+      provider: 'novitaai', model: 'test', baseURL: 'http://watch.test/v1', apiKeyEnv: 'WATCH_CONTRACT_API_KEY',
+      capabilities: { tools: true, text: true, images: true, audio: true, video: true },
+    },
+  } }));
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === 'https://models.dev/api.json') return Response.json({});
+    assert.equal(String(input), 'http://watch.test/v1/chat/completions');
+    requests.push(JSON.parse(String(init?.body)));
+    return Response.json({
+      id: `response-${requests.length}`, object: 'chat.completion', created: 0, model: 'test',
+      choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'observed' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 },
+    });
+  };
+  const registry = ModelRegistry.load(root, 'novitaai:test');
+  const model = await registry.getActive();
+  const streams = new StreamRegistry([], root);
+  t.after(() => streams.stop());
+  const lookout = new Lookout(streams, new EventLog(root), registry, false, root);
+  const sounding: Sounding = {
+    id: 'media', at: new Date().toISOString(), lastFlickerMs: 1000,
+    trigger: 'delta', modelId: model.id, model,
+    deltas: ['image/jpeg', 'audio/wav', 'video/mp4'].map((mediaType, index) => ({
+      stream: `media-${index}`, at: new Date().toISOString(), payload: { mediaType, dataBase64: 'YWJj' },
+    })),
+  };
+  await lookout.receive(sounding);
+  await lookout.receive({ ...sounding, id: 'next', trigger: 'heartbeat', deltas: [] });
+  for (const request of requests) {
+    const parts = request.messages.flatMap(message => Array.isArray(message.content) ? message.content : []);
+    assert.ok(parts.some(part => part.type === 'image_url' && part.image_url.url === 'data:image/jpeg;base64,YWJj'));
+    assert.ok(parts.some(part => part.type === 'input_audio' && part.input_audio.data === 'YWJj'));
+    assert.ok(parts.some(part => part.type === 'video_url' && part.video_url.url === 'data:video/mp4;base64,YWJj'));
+  }
+  assert.equal(requests.length, 2);
+});
